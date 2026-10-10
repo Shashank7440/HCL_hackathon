@@ -12,10 +12,10 @@ st.set_page_config(
 
 API_BASE = os.getenv("API_BASE", "http://localhost:8000")
 try:
-    if "API_BASE" in st.secrets:
-        API_BASE = st.secrets["API_BASE"]
-except Exception:
-    pass
+    if hasattr(st, "secrets"):
+        API_BASE = st.secrets.get("API_BASE", API_BASE)
+except BaseException:
+    API_BASE = os.getenv("API_BASE", "http://localhost:8000")
 
 # Cached health check so UI never blocks or lags
 @st.cache_data(ttl=30)
@@ -166,7 +166,12 @@ with st.sidebar:
             st.session_state["preset_input"] = query_text
 
 # Main Tabs
-tab_chat, tab_ingest, tab_audit = st.tabs(["💬 Customer Support Chat", "📄 Panelist Document Ingest", "🔍 Audit Trace Inspector"])
+tab_chat, tab_ingest, tab_audit, tab_db = st.tabs([
+    "💬 Customer Support Chat",
+    "📄 Panelist Document Ingest",
+    "🔍 Audit Trace Inspector",
+    "🗄️ Database Explorer"
+])
 
 with tab_chat:
     if "messages" not in st.session_state:
@@ -327,3 +332,79 @@ with tab_audit:
                     st.error(f"Audit lookup returned status {resp.status_code}: {resp.text}")
             except Exception as e:
                 st.error(f"Audit lookup failed: {e}")
+
+with tab_db:
+    st.subheader("🗄️ SQLite Database Explorer (`data/app.db`)")
+    st.caption("Browse, inspect, and query the underlying relational tables directly without needing external tools.")
+
+    import sqlite3, pandas as pd
+    from app.config import settings
+
+    try:
+        conn = sqlite3.connect(settings.DB_PATH)
+        
+        # Summary Metrics
+        m1, m2, m3, m4 = st.columns(4)
+        c_count = conn.execute("SELECT COUNT(*) FROM customers").fetchone()[0]
+        o_count = conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
+        p_count = conn.execute("SELECT COUNT(*) FROM products").fetchone()[0]
+        r_count = conn.execute("SELECT COUNT(*) FROM rule_registry").fetchone()[0]
+        m1.metric("Customers", c_count)
+        m2.metric("Orders", o_count)
+        m3.metric("Products", p_count)
+        m4.metric("Active Rules", r_count)
+
+        st.divider()
+
+        tables = ["customers", "orders", "order_items", "products", "returns", "rule_registry", "audit_log", "documents", "chunks"]
+        selected_tbl = st.selectbox("Select Table to View:", options=tables, index=0)
+
+        # Search filter
+        search_kw = st.text_input(f"Filter records in '{selected_tbl}' (search keyword):", value="")
+        
+        limit_n = st.slider("Max rows to display:", min_value=10, max_value=200, value=50, step=10)
+        
+        query = f"SELECT * FROM {selected_tbl}"
+        if search_kw.strip():
+            # Filter across columns
+            df_full = pd.read_sql_query(query, conn)
+            mask = df_full.astype(str).apply(lambda col: col.str.contains(search_kw.strip(), case=False, na=False)).any(axis=1)
+            df = df_full[mask].head(limit_n)
+            st.info(f"Showing {len(df)} matching rows (out of {len(df_full)} total)")
+        else:
+            df = pd.read_sql_query(f"{query} LIMIT {limit_n}", conn)
+            st.caption(f"Showing top {len(df)} rows")
+
+        st.dataframe(df, use_container_width=True)
+
+        # Download CSV button
+        csv_data = df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label=f"📥 Download {selected_tbl}.csv",
+            data=csv_data,
+            file_name=f"{selected_tbl}.csv",
+            mime="text/csv",
+        )
+
+        st.divider()
+        st.subheader("⚡ Execute Custom Read-Only SQL Query")
+        custom_sql = st.text_area(
+            "SQL Query (SELECT only):",
+            value=f"SELECT * FROM orders WHERE customer_id = '{active_cid if active_cid else 'C1001'}' LIMIT 10"
+        )
+        if st.button("Run SQL Query"):
+            sql_clean = custom_sql.strip()
+            if not sql_clean.lower().startswith("select"):
+                st.error("Only SELECT queries are allowed in this explorer for safety.")
+            else:
+                try:
+                    res_df = pd.read_sql_query(sql_clean, conn)
+                    st.success(f"Returned {len(res_df)} rows")
+                    st.dataframe(res_df, use_container_width=True)
+                except Exception as sql_err:
+                    st.error(f"SQL Error: {sql_err}")
+
+        conn.close()
+    except Exception as db_err:
+        st.error(f"Database connection error: {db_err}")
+
