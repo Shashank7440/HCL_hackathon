@@ -32,28 +32,38 @@ st.markdown("""
     }
     
     .customer-badge {
-        background: #F8FAFC;
-        border: 1px solid #E2E8F0;
-        border-left: 4px solid #3B82F6;
-        padding: 12px 16px;
-        border-radius: 10px;
-        margin-top: 10px;
-        margin-bottom: 14px;
+        background: rgba(59, 130, 246, 0.08) !important;
+        border: 1px solid rgba(59, 130, 246, 0.25) !important;
+        border-left: 4px solid #3B82F6 !important;
+        padding: 14px 16px !important;
+        border-radius: 10px !important;
+        margin-top: 10px !important;
+        margin-bottom: 14px !important;
     }
     
     .audit-card {
-        background: #F8FAFC;
-        border: 1px solid #E2E8F0;
-        border-radius: 10px;
-        padding: 16px;
-        margin-bottom: 12px;
+        background: rgba(255, 255, 255, 0.04) !important;
+        border: 1px solid rgba(128, 128, 128, 0.2) !important;
+        border-radius: 10px !important;
+        padding: 16px !important;
+        margin-bottom: 12px !important;
     }
     
     .stMetric {
-        background: #F8FAFC;
-        border: 1px solid #E2E8F0;
-        padding: 10px 14px;
-        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.05) !important;
+        border: 1px solid rgba(128, 128, 128, 0.22) !important;
+        padding: 12px 16px !important;
+        border-radius: 10px !important;
+    }
+
+    [data-testid="stMetricLabel"] p {
+        font-size: 0.82rem !important;
+        opacity: 0.85 !important;
+    }
+
+    [data-testid="stMetricValue"] div {
+        font-size: 1.15rem !important;
+        font-weight: 700 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -188,10 +198,13 @@ with st.sidebar:
     c_info = CUSTOMERS_INFO.get(active_cid, {"name": "Custom User", "tier": "UNKNOWN", "orders": "Custom", "expected": "Custom scenario"})
     st.markdown(f"""
     <div class="customer-badge">
-        <div style="font-weight: 600; color: #1E293B; font-size: 1rem;">{c_info['name']} <span style="font-size: 0.8rem; background: #E0E7FF; color: #3730A3; padding: 2px 6px; border-radius: 4px;">{active_cid or 'Guest'}</span></div>
-        <div style="font-size: 0.85rem; color: #475569; margin-top: 4px;"><b>Tier:</b> {c_info['tier']}</div>
-        <div style="font-size: 0.85rem; color: #475569;"><b>Orders:</b> {c_info['orders']}</div>
-        <div style="font-size: 0.8rem; color: #64748B; margin-top: 6px; line-height: 1.3;"><i>{c_info['expected']}</i></div>
+        <div style="font-weight: 600; font-size: 1.05rem; display: flex; align-items: center; justify-content: space-between;">
+            <span>{c_info['name']}</span>
+            <span style="font-size: 0.8rem; background: rgba(59, 130, 246, 0.2); color: #60A5FA; padding: 2px 8px; border-radius: 6px; font-weight: 600;">{active_cid or 'Guest'}</span>
+        </div>
+        <div style="font-size: 0.85rem; opacity: 0.9; margin-top: 6px;"><b>Tier:</b> {c_info['tier']}</div>
+        <div style="font-size: 0.85rem; opacity: 0.9; margin-top: 2px;"><b>Orders:</b> {c_info['orders']}</div>
+        <div style="font-size: 0.8rem; opacity: 0.75; margin-top: 6px; line-height: 1.35;"><i>{c_info['expected']}</i></div>
     </div>
     """, unsafe_allow_html=True)
 

@@ -17,8 +17,8 @@ We evaluated two architectural configurations over the comprehensive 25-question
 | **Abstention Accuracy** | 100.0% | **100.0%** | 0.0% |
 | **Tool-Result Correctness** | 100.0% | **100.0%** | 0.0% |
 | **Retrieval Hit Rate** | 100.0% | **100.0%** | +0.0% |
-| **p50 Latency** | 3.04 ms | **2.5 ms** | - |
-| **p95 Latency** | 802.41 ms | **249.39 ms** | - |
+| **p50 Latency** | 7.19 ms | **6.85 ms** | - |
+| **p95 Latency** | 600.71 ms | **615.92 ms** | - |
 
 ---
 
