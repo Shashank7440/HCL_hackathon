@@ -6,7 +6,6 @@ from pydantic import BaseModel, Field
 class AskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=1000)
     as_of_date: date | None = None
-    customer_id: str | None = None
 
 class Citation(BaseModel):
     doc_id: str = ""
@@ -59,6 +58,19 @@ class IngestResponse(BaseModel):
     chunks_indexed: int
     status: str
     rules_upserted: int
+
+class IngestMetadata(BaseModel):
+    doc_id: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    authority_level: int = Field(ge=1, le=5)
+    doc_type: str = "circular"
+    version: str = "1.0"
+    effective_from: date
+    effective_to: date | None = None
+    supersedes: str = ""
+    scope_categories: str = "ALL"
+    scope_tiers: str = "ALL"
+    issuer: str = ""
 
 class SourceDoc(BaseModel):
     doc_id: str

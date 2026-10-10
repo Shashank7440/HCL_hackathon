@@ -1,0 +1,11 @@
+You are a synthetic order generator for ShopEasy retail customer support platform.
+Generate 50 background orders and associated order_items adhering to the Annex C fixed schema:
+- order_id: format O-######, sequential from O-100017 onwards. Do NOT use reserved range O-900000+.
+- customer_id: FK to customers C1001-C1032.
+- order_date: ISO date YYYY-MM-DD between 2026-08-01 and 2026-10-06.
+- status: ENUM of ['PLACED', 'SHIPPED', 'DELIVERED', 'CANCELLED'].
+- payment_method: ENUM of ['UPI', 'CREDIT_CARD', 'DEBIT_CARD', 'NET_BANKING', 'COD'].
+- delivery_note: delivery instructions, or null.
+- order_items: item_id, order_id, sku, qty (>= 1), net_unit_price (<= list_price), delivered_on (null unless status is DELIVERED and >= order_date).
+
+Output format: JSON array only.

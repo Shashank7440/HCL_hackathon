@@ -3,6 +3,7 @@ Synchronous; usable by the very next /ask. Idempotent (same doc_id replaces)."""
 from __future__ import annotations
 import json, time
 from datetime import date
+from ..config import settings
 from ..db import get_conn
 from ..retrieval.store import VectorStore
 
@@ -19,12 +20,12 @@ def ingest_document(conn, store: VectorStore, file_path: str, filename: str,
         raise ValueError("EMPTY_DOCUMENT")
     from .chunker import chunk_pages
     chunks = chunk_pages(doc_id, metadata["title"], pages)
-    if not rules:
+    if not rules and settings.AUTO_EXTRACT_RULES:
         rules = extract_rules_from_pages(doc_id, metadata, pages)
     meta = {k: metadata.get(k, "" if k not in ("authority_level",) else 4) for k in META_FIELDS}
     with conn:
         # idempotent replace: remove old chunks + rules, then upsert doc row (FK target)
-        conn.execute("DELETE FROM chunks WHERE doc_id = ?", (doc_id,)) if False else store.delete_doc(doc_id)
+        store.delete_doc(doc_id)
         conn.execute("DELETE FROM rule_registry WHERE source_doc_id = ?", (doc_id,))
         conn.execute("""INSERT OR REPLACE INTO documents(doc_id,title,issuer,authority_level,doc_type,
             version,effective_from,effective_to,supersedes,scope_categories,scope_tiers,provenance,
@@ -93,7 +94,7 @@ def extract_rules_from_pages(doc_id: str, metadata: dict, pages) -> list[dict]:
                 "effective_to": metadata.get("effective_to", "") or "",
                 "source_doc_id": doc_id,
                 "source_section": "1",
-                "auto_extracted": 0,
+                "auto_extracted": 1,
             })
     # general return window if no category-specific matched
     if not extracted:
@@ -112,7 +113,7 @@ def extract_rules_from_pages(doc_id: str, metadata: dict, pages) -> list[dict]:
                 "effective_to": metadata.get("effective_to", "") or "",
                 "source_doc_id": doc_id,
                 "source_section": "1",
-                "auto_extracted": 0,
+                "auto_extracted": 1,
             })
     # 2. Restocking fee
     m = re.search(r"restocking\s+fee\s+(?:is\s+|of\s+|charged\s+at\s+)(\d+(?:\.\d+)?)\s*%", full_text, re.I)
@@ -129,7 +130,7 @@ def extract_rules_from_pages(doc_id: str, metadata: dict, pages) -> list[dict]:
             "effective_to": metadata.get("effective_to", "") or "",
             "source_doc_id": doc_id,
             "source_section": "1",
-            "auto_extracted": 0,
+            "auto_extracted": 1,
         })
     # 3. Reverse shipping fee
     m = re.search(r"reverse\s+shipping\s+fee\s+(?:is\s+|of\s+|charged\s+at\s+)(\d+(?:\.\d+)?)", full_text, re.I)
@@ -146,6 +147,6 @@ def extract_rules_from_pages(doc_id: str, metadata: dict, pages) -> list[dict]:
             "effective_to": metadata.get("effective_to", "") or "",
             "source_doc_id": doc_id,
             "source_section": "1",
-            "auto_extracted": 0,
+            "auto_extracted": 1,
         })
     return extracted

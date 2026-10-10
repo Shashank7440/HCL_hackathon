@@ -1,11 +1,13 @@
 """Retriever: hybrid search (semantic when Chroma available + keyword always), then
 Annex A precedence filtering: drop superseded, order by authority asc / effective date desc."""
 from __future__ import annotations
+import re
 from ..config import settings
 from .store import VectorStore
 
 EXPANSIONS = {"send back": "return", "give back": "return", "money back": "refund",
-              "exchange": "return", "send it back": "return"}
+              "exchange": "return", "send it back": "return",
+              "gadget": "electronics", "gadgets": "electronics"}
 
 class Retriever:
     def __init__(self, conn, store: VectorStore | None = None):
@@ -20,9 +22,25 @@ class Retriever:
         q = correct_typos(question).lower()
         for k, v in EXPANSIONS.items():
             if k in q: q = q.replace(k, v)
-        hits = self.store.semantic_search(q, as_of_i, top_k) or self.store.keyword_search(q, as_of_i, top_k)
+        hits = self.store.semantic_search(q, as_of_i, top_k)
+        if hits is None:
+            hits = self.store.keyword_search(q, as_of_i, top_k)
         hits = self._precedence_filter(hits, category, tier, as_of_i)
+        if self._asks_about_unknown_entity(question):
+            return []
         return hits[:top_k]
+
+    def _asks_about_unknown_entity(self, question: str) -> bool:
+        """A capitalised, non-initial term found in NO ingested chunk/doc/product is something the sources
+        cannot speak about (Antarctica, Amazon, CEO). Embedding similarity alone cannot catch this."""
+        vocab = {w for (t,) in self.conn.execute("SELECT text FROM chunks")
+                 for w in re.findall(r"[a-z]+", t.lower())}
+        vocab |= {w for (n,) in self.conn.execute("SELECT name FROM products")
+                  for w in re.findall(r"[a-z]+", n.lower())}
+        vocab |= {w for r in self.conn.execute("SELECT doc_id, title, doc_type, issuer FROM documents")
+                  for v in r for w in re.findall(r"[a-z]+", (v or "").lower())}
+        tokens = re.findall(r"[A-Za-z]{3,}", re.sub(r"'s\b", "", question))
+        return any(t[0].isupper() and t.lower() not in vocab for t in tokens[1:])
 
     def _precedence_filter(self, hits: list[dict], category, tier, as_of_i) -> list[dict]:
         """Drop superseded chunks with section-level precision and scope awareness:

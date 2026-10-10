@@ -11,7 +11,7 @@ class Settings:
     CHROMA_PATH   = os.getenv("CHROMA_PATH", "data/chroma")
     DB_PATH       = os.getenv("DB_PATH", "data/app.db")
     TOP_K         = int(os.getenv("TOP_K", "6"))
-    MIN_SCORE     = float(os.getenv("MIN_SCORE", "0.30"))
+    MIN_SCORE     = float(os.getenv("MIN_SCORE", "0.40"))
     CHUNK_TOKENS  = int(os.getenv("CHUNK_TOKENS", "400"))
     CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "60"))
     ADMIN_KEY     = os.getenv("ADMIN_KEY", "admin-demo-key")

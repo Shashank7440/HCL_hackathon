@@ -9,13 +9,22 @@ CATS = ("ELECTRONICS", "FASHION", "HOME", "BEAUTY", "GROCERY")
 
 CAT_SYNONYMS = {
     "ELECTRONICS": ("electronic", "electronics", "headphone", "headphones", "earbuds", "earphone",
-                    "laptop", "phone", "tv", "television", "charger", "cable", "speaker", "camera", "tablet"),
+                    "laptop", "phone", "tv", "television", "charger", "cable", "speaker", "camera", "tablet",
+                    "gadget", "gadgets"),
     "FASHION": ("fashion", "apparel", "clothing", "shirt", "t-shirt", "dress", "jeans", "pant",
                 "jacket", "shoe", "shoes", "sneaker", "sneakers", "skirt"),
     "BEAUTY": ("beauty", "cosmetic", "cream", "lipstick", "perfume", "lotion", "skincare", "serum"),
     "GROCERY": ("grocery", "food", "coffee", "tea", "snack", "rice", "flour", "beverage"),
     "HOME": ("home", "furniture", "sofa", "chair", "table", "bed", "lamp", "curtain", "desk")
 }
+
+REASONS = (("DEFECTIVE", r"defective|faulty|stopped working|not working|doesn'?t work"),
+           ("DAMAGED", r"damaged|broken|cracked|arrived (torn|dented)"),
+           ("WRONG_ITEM", r"wrong (item|product|size)|different item"),
+           ("CHANGED_MIND", r"changed my mind|don'?t want|no longer need|do not want"))
+
+PRODUCT_WORDS = ("headphones", "headphone", "earbuds", "watch", "laptop", "speaker", "rice",
+                 "jacket", "shirt", "jeans", "phone", "tv", "camera", "tablet", "curtain", "desk", "gadget")
 
 PROCEDURE_RE = ("policy", "how do i", "how can i", "what is the", "what's the", "how long",
                 "how does", "do you", "does the", "are there", "who is", "can someone", "is there")
@@ -65,7 +74,11 @@ def extract(question: str) -> dict:
                 category = cat
                 break
 
-    # 2. Entity extractions for what-if and multi-step
+    # 2. Reason and product extraction
+    reason = next((r for r, rx in REASONS if re.search(rx, q)), None)
+    product_name = next((p for p in PRODUCT_WORDS if p in q), None)
+
+    # 3. Entity extractions for what-if and multi-step
     days_m = re.search(r"(?:after|in|within|past)\s+(\d+)\s*(?:calendar\s*)?days|(\d+)\s*days\s+(?:ago|after|later)", q)
     days_offset = int(days_m.group(1) or days_m.group(2)) if days_m else None
 
@@ -77,7 +90,8 @@ def extract(question: str) -> dict:
     refund_words = any(w in q for w in ("refund", "money back", "how much", "get back", "reimburse"))
     warranty_words = "warranty" in q or "guarantee" in q or "stopped working" in q or "defective" in q
     general_asking = any(q.startswith(p) or f" {p} " in q for p in PROCEDURE_RE)
-    personal_indicators = any(p in q for p in ("my ", "my order", "i bought", "i have", "mine", "my item", "i return my"))
+    personal_indicators = bool(re.search(
+        r"\b(my|mine)\b|\bi (bought|ordered|purchased)\b|\bi have (an?|my|the) (order|item)\b", q))
 
     is_what_if = "what if" in q or "suppose" in q or "hypothetically" in q or "what would happen if" in q
     is_multi_step = (
@@ -108,7 +122,9 @@ def extract(question: str) -> dict:
             intent = "order_status"
     else:
         # No order ID in question
-        if personal_indicators and (return_words or refund_words):
+        if re.search(r"\bwhere is my order\b|\btrack my\b|\bstatus of my order\b|\bmy order\b", q):
+            intent = "order_status"
+        elif personal_indicators and (return_words or refund_words):
             intent = "return_eligibility"     # personal without order id -> clarification or sign-in
         elif general_asking or "deliver" in q or "shipping" in q or "window" in q or category or ("return" in q and not personal_indicators):
             intent = "policy_fact"
@@ -123,7 +139,9 @@ def extract(question: str) -> dict:
         "sku": sku.group(0) if sku else None,
         "category": category,
         "days_offset": days_offset,
-        "what_if_tier": what_if_tier
+        "what_if_tier": what_if_tier,
+        "reason": reason,
+        "product_name": product_name
     }
 
 def route(question: str, llm_classify=None) -> dict:

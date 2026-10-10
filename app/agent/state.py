@@ -11,6 +11,8 @@ class AgentState(TypedDict, total=False):
     category: str | None
     days_offset: int | None
     what_if_tier: str | None
+    reason: str | None
+    product_name: str | None
     plan: list[str] | None
     answer: str
     answer_type: str

@@ -73,26 +73,36 @@ def health():
     except Exception:
         db_ok = False
     llm_ok = check_llm_live()
-    conn = get_conn()
+
+    from .retrieval.store import VectorStore
+    store = VectorStore(conn)
+    store_ok = (store.client is not None and not store.last_error)
+    retrieval_mode = "semantic" if store_ok else "keyword-fallback"
+
     try:
         details = {"llm_provider": settings.LLM_PROVIDER, "model": settings.OLLAMA_MODEL,
                    "mock_llm": settings.MOCK_LLM,
+                   "retrieval_mode": retrieval_mode,
                    "documents": conn.execute("SELECT COUNT(*) c FROM documents").fetchone()["c"],
                    "chunks": conn.execute("SELECT COUNT(*) c FROM chunks").fetchone()["c"],
                    "rules": conn.execute("SELECT COUNT(*) c FROM rule_registry").fetchone()["c"],
                    "customers": conn.execute("SELECT COUNT(*) c FROM customers").fetchone()["c"]}
     finally:
         conn.close()
-    return {"status": "ok" if db_ok else "degraded", "api": True, "sqlite": db_ok,
-            "vector_store": True, "llm": llm_ok, "details": details}
+    overall_ok = db_ok and store_ok
+    return {"status": "ok" if overall_ok else "degraded", "api": True, "sqlite": db_ok,
+            "vector_store": store_ok, "llm": llm_ok, "details": details}
 
 @app.post("/ask", response_model=AskResponse)
 def ask(body: AskRequest,
         x_customer_id: str | None = Header(default=None)):
-    cid = x_customer_id or body.customer_id
-    state = {"question": body.question, "customer_id": cid,
-             "as_of_date": body.as_of_date.isoformat() if body.as_of_date else date.today().isoformat()}
+    import time
+    t0 = time.perf_counter()
+    state = {"question": body.question, "customer_id": x_customer_id,
+             "as_of_date": body.as_of_date.isoformat() if body.as_of_date else date.today().isoformat(),
+             "t0": t0}
     result = graph.execute(state)
+    result["latency_ms"] = round((time.perf_counter() - t0) * 1000, 2)
     conn = get_conn()
     try:
         store_record(conn, result)
@@ -129,9 +139,15 @@ async def ingest(file: UploadFile = File(...),
     except json.JSONDecodeError:
         raise HTTPException(422, "VALIDATION_ERROR: metadata is not valid JSON")
     if not metadata_obj: raise HTTPException(422, "VALIDATION_ERROR: metadata required")
-    missing = [f for f in ("doc_id","title","authority_level","version","effective_from") if not metadata_obj.get(f)]
-    if missing:
-        raise HTTPException(422, f"VALIDATION_ERROR: missing {missing}")
+    try:
+        from .schemas import IngestMetadata
+        valid_meta = IngestMetadata(**metadata_obj)
+        metadata_dict = valid_meta.model_dump()
+        metadata_dict["effective_from"] = valid_meta.effective_from.isoformat()
+        if valid_meta.effective_to:
+            metadata_dict["effective_to"] = valid_meta.effective_to.isoformat()
+    except Exception as e:
+        raise HTTPException(422, f"VALIDATION_ERROR: {e}")
     try:
         rules_obj = parse_rules_field(rules_raw)
     except (ValueError, json.JSONDecodeError) as e:
@@ -144,7 +160,7 @@ async def ingest(file: UploadFile = File(...),
     conn = get_conn()
     try:
         from .retrieval.store import VectorStore
-        out = ingest_document(conn, VectorStore(conn), str(tmp), file.filename, metadata_obj, rules_obj)
+        out = ingest_document(conn, VectorStore(conn), str(tmp), file.filename, metadata_dict, rules_obj)
         if out["chunks_indexed"] == 0: raise HTTPException(422, "EMPTY_DOCUMENT")
         return IngestResponse(**out)
     except ValueError as e:

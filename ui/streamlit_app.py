@@ -327,7 +327,7 @@ with tab_chat:
             with st.spinner("Processing through Multi-Agent System..."):
                 try:
                     headers = {"X-Customer-Id": active_cid} if active_cid else {}
-                    payload = {"question": user_query, "as_of_date": as_of_str, "customer_id": active_cid}
+                    payload = {"question": user_query, "as_of_date": as_of_str}
                     res = requests.post(f"{API_BASE}/ask", json=payload, headers=headers, timeout=60)
                     data = res.json()
 

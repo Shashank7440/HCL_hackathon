@@ -8,3 +8,8 @@ __pycache__/
 
 # Logs
 *.log
+
+# Data and vector artifacts
+data/chroma/
+data/*.db
+.streamlit/secrets.toml

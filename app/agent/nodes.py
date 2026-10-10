@@ -1,22 +1,20 @@
-"""Multi-Agent System Nodes:
-- SecurityGuardAgent (guard_input, authz)
-- SupervisorAgent (route)
-- OrderToolsAgent (tools_node)
-- PolicyRetrievalAgent (retrieve_node)
-- CompositeMultiStepAgent (composite_node)
-- SynthesisAgent (compose_node, finalize_node)
+"""LangGraph Workflow Nodes:
+guard_input -> route -> authz -> [tools_node | composite_node | retrieve_node] -> compose_node -> finalize_node
 """
 from __future__ import annotations
 from datetime import date
+import json
 import re
 import secrets
 from decimal import Decimal
+from ..config import settings
 from ..constants import NOT_FOUND_MSG, REFUSAL_MSG, SIGN_IN_MSG, ANSWER_TYPES
 from ..security import sanitize, known_customer, owns_order, refusal_uniform
 from ..tools import orders as order_tools
 from ..tools import returns as return_tools
 from ..tools.warranty import check_warranty
-from ..rules.registry import get_rule, rule_citation
+from ..rules.registry import get_rule
+from .policy import citation_for, policy_fact
 from . import router as agent_router
 
 INJECTION_PATTERNS = (
@@ -68,31 +66,46 @@ def route(state: dict) -> dict:
     return {**r, "llm_calls": llm_calls, "tokens": tokens}
 
 def authz(state: dict, conn) -> dict:
-    """Security guard: verified header identity and order ownership."""
+    """Security guard: verified header identity and order ownership (R7)."""
+    q = state["question"].lower()
+    cid = state.get("customer_id")
+
+    # Refuse cross-customer extraction or list-all queries
+    if re.search(r"\b(all|every|other|another)\s+(customers?|users?|accounts?)\b", q):
+        return {"answer": refusal_uniform(), "answer_type": "refused", "refused": True}
+
+    other_cids = re.findall(r"\bC\d{4}\b", state["question"])
+    for oc in other_cids:
+        if not cid or oc.upper() != cid.upper():
+            return {"answer": refusal_uniform(), "answer_type": "refused", "refused": True}
+
     order_id = state.get("order_id")
     if not order_id:
         return {}
-    cid = state.get("customer_id")
     if not cid or not known_customer(conn, cid):
         return {"answer": SIGN_IN_MSG, "answer_type": "refused", "refused": True}
     if not owns_order(conn, cid, order_id):
         return {"answer": refusal_uniform(), "answer_type": "refused", "refused": True}
     return {}
 
-def _merge_tool_fields(state: dict, out: dict) -> None:
+def _merge_tool_fields(state: dict, out: dict, conn=None) -> None:
     """Fold tool outputs (applied rules, conflicts, upcoming) into response fields."""
     st = state
     for r in out.get("applied_rules", []):
         st["applied_rules"].append(r)
-        cit = {
-            "doc_id": r.get("source_doc_id", ""),
-            "title": "",
-            "section": r.get("source_section", ""),
-            "page": 1,
-            "version": "",
-            "effective_from": ""
-        }
-        st["citations"].append(cit)
+        if conn and r.get("source_doc_id"):
+            cit = citation_for(conn, r["source_doc_id"], r.get("source_section", ""))
+        else:
+            cit = {
+                "doc_id": r.get("source_doc_id", ""),
+                "title": "",
+                "section": r.get("source_section", ""),
+                "page": 1,
+                "version": "",
+                "effective_from": ""
+            }
+        if not any(c.get("doc_id") == cit["doc_id"] and c.get("section") == cit["section"] for c in st["citations"]):
+            st["citations"].append(cit)
     for c in out.get("conflicts", []):
         st["conflicts_detected"].append(c)
     for u in out.get("upcoming_changes", []):
@@ -102,11 +115,66 @@ def _merge_tool_fields(state: dict, out: dict) -> None:
 def tools_node(state: dict, conn) -> dict:
     cid, oid = state.get("customer_id"), state.get("order_id")
     intent, sku, as_of = state["intent"], state.get("sku"), state["as_of_date"]
+    reason = state.get("reason") or "CHANGED_MIND"
+
+    # Personal inquiries require identity (R7)
+    if not oid and intent in ("order_status", "return_eligibility", "refund", "raise_return", "warranty"):
+        if not cid or not known_customer(conn, cid):
+            return {"answer": SIGN_IN_MSG, "answer_type": "refused", "refused": True}
+        rows = order_tools.list_customer_orders(conn, cid)
+        if not rows:
+            return {"answer": refusal_uniform(), "answer_type": "refused", "refused": True}
+
+        # Check for matching product / category across caller's orders
+        cat = state.get("category")
+        pname = state.get("product_name")
+        matching = []
+        for r in rows:
+            full_o = order_tools.get_order(conn, cid, r["order_id"])
+            if full_o:
+                for itm in full_o["items"]:
+                    p_row = conn.execute("SELECT category, name FROM products WHERE sku = ?", (itm["sku"],)).fetchone()
+                    if p_row:
+                        if sku and itm["sku"] == sku:
+                            matching.append({"order_id": r["order_id"], "order_date": r["order_date"], "name": p_row["name"], "sku": itm["sku"]})
+                        elif pname:
+                            if pname.lower() in p_row["name"].lower():
+                                matching.append({"order_id": r["order_id"], "order_date": r["order_date"], "name": p_row["name"], "sku": itm["sku"]})
+                        elif cat and p_row["category"].upper() == cat.upper():
+                            matching.append({"order_id": r["order_id"], "order_date": r["order_date"], "name": p_row["name"], "sku": itm["sku"]})
+        if len(matching) > 1:
+            return {
+                "answer": f"You have multiple orders containing {matching[0]['name']}: " +
+                          ", ".join(f"{m['order_id']} ({m['order_date']})" for m in matching) +
+                          ". Which order would you like to return?",
+                "answer_type": "clarification_needed"
+            }
+        elif len(matching) == 1:
+            oid = matching[0]["order_id"]
+            sku = matching[0]["sku"]
+            state["order_id"] = oid
+            state["sku"] = sku
+        elif len(rows) == 1 and intent == "order_status":
+            oid = rows[0]["order_id"]
+            state["order_id"] = oid
+        else:
+            orders_desc = []
+            for r in rows[:5]:
+                full_o = order_tools.get_order(conn, cid, r["order_id"])
+                item_names = []
+                if full_o and full_o.get("items"):
+                    for itm in full_o["items"]:
+                        p_row = conn.execute("SELECT name FROM products WHERE sku = ?", (itm["sku"],)).fetchone()
+                        item_names.append(p_row["name"] if p_row else itm["sku"])
+                item_str = f" ({', '.join(item_names)})" if item_names else ""
+                orders_desc.append(f"{r['order_id']}{item_str} placed on {r['order_date']}")
+            return {
+                "answer": "Which order is this about? Your orders: " +
+                          ", ".join(orders_desc) + ". Which order would you like to check?",
+                "answer_type": "clarification_needed"
+            }
 
     if intent in ("order_status",):
-        if not oid:
-            return {"answer": "Which order would you like me to look up? Please share the order id.",
-                    "answer_type": "clarification_needed"}
         out = order_tools.get_order(conn, cid, oid)
         if out is None:
             return {"answer": refusal_uniform(), "answer_type": "refused", "refused": True}
@@ -125,63 +193,51 @@ def tools_node(state: dict, conn) -> dict:
             "explanation": "Looked up by a tool, for the logged-in customer only."
         }
 
-    if intent in ("return_eligibility", "refund", "raise_return", "warranty") and not oid:
-        # Personal inquiry without an order ID
-        if not cid or not known_customer(conn, cid):
-            return {"answer": SIGN_IN_MSG, "answer_type": "refused", "refused": True}
-        rows = order_tools.list_customer_orders(conn, cid)
-        if not rows:
-            return {"answer": refusal_uniform(), "answer_type": "refused", "refused": True}
-        
-        # Check for multiple orders of the same product/category (ambiguity edge case)
-        cat = state.get("category")
-        if cat or sku:
-            matching = []
-            for r in rows:
-                full_o = order_tools.get_order(conn, cid, r["order_id"])
-                if full_o:
-                    for itm in full_o["items"]:
-                        p_row = conn.execute("SELECT category, name FROM products WHERE sku = ?", (itm["sku"],)).fetchone()
-                        if p_row:
-                            if sku and itm["sku"] == sku:
-                                matching.append((r["order_id"], r["order_date"], p_row["name"]))
-                            elif cat and p_row["category"].upper() == cat.upper():
-                                matching.append((r["order_id"], r["order_date"], p_row["name"]))
-            if len(matching) > 1:
-                return {
-                    "answer": f"You have multiple orders containing {matching[0][2]}: " +
-                              ", ".join(f"{m[0]} ({m[1]})" for m in matching) +
-                              ". Which order would you like to return?",
-                    "answer_type": "clarification_needed"
-                }
-
-        orders_desc = []
-        for r in rows[:5]:
-            full_o = order_tools.get_order(conn, cid, r["order_id"])
-            item_names = []
-            if full_o and full_o.get("items"):
-                for itm in full_o["items"]:
-                    p_row = conn.execute("SELECT name FROM products WHERE sku = ?", (itm["sku"],)).fetchone()
-                    item_names.append(p_row["name"] if p_row else itm["sku"])
-            item_str = f" ({', '.join(item_names)})" if item_names else ""
-            orders_desc.append(f"{r['order_id']}{item_str} placed on {r['order_date']}")
-
-        return {
-            "answer": "Which order is this about? Your orders: " +
-                      ", ".join(orders_desc) + ". Which order would you like to check?",
-            "answer_type": "clarification_needed"
-        }
+    # Match SKU inside the order if not explicitly specified
+    if oid and not sku:
+        full_o = order_tools.get_order(conn, cid, oid)
+        if full_o and full_o.get("items"):
+            items = full_o["items"]
+            if len(items) == 1:
+                sku = items[0]["sku"]
+            else:
+                pname = state.get("product_name")
+                if pname:
+                    for itm in items:
+                        p_row = conn.execute("SELECT name FROM products WHERE sku = ?", (itm["sku"],)).fetchone()
+                        if p_row and pname.lower() in p_row["name"].lower():
+                            sku = itm["sku"]
+                            break
 
     if intent == "return_eligibility":
-        out = return_tools.check_return_eligibility(conn, cid, oid, sku, as_of=as_of)
+        out = return_tools.check_return_eligibility(conn, cid, oid, sku, reason=reason, as_of=as_of)
         state["tools_invoked"].append({
             "tool": "check_return_eligibility",
-            "input": {"order_id": oid, "sku": sku},
+            "input": {"order_id": oid, "sku": sku, "reason": reason},
             "output": out
         })
-        _merge_tool_fields(state, out)
+        _merge_tool_fields(state, out, conn)
         if out["result"] == "NOT_AUTHORIZED":
             return {"answer": refusal_uniform(), "answer_type": "refused", "refused": True}
+        if out["result"] == "CONFLICT":
+            tied = out.get("tied", [])
+            for t in tied:
+                cit = citation_for(conn, t["source_doc_id"], "")
+                if not any(c.get("doc_id") == cit["doc_id"] and c.get("section") == cit["section"] for c in state["citations"]):
+                    state["citations"].append(cit)
+            return {
+                "answer": "Our sources conflict on the return window and the precedence policy cannot decide. Please contact customer support.",
+                "answer_type": "conflict_flagged"
+            }
+        if out["result"] == "CLARIFICATION_NEEDED":
+            items_info = []
+            for item_sku in out.get("items", []):
+                p_row = conn.execute("SELECT name FROM products WHERE sku = ?", (item_sku,)).fetchone()
+                items_info.append(f"{item_sku} ({p_row['name'] if p_row else 'item'})")
+            return {
+                "answer": f"Order {oid} contains multiple items: {', '.join(items_info)}. Which product would you like to return?",
+                "answer_type": "clarification_needed"
+            }
         if out["result"] == "ELIGIBLE":
             state["assumptions"].extend(out.get("assumptions", []))
             return {
@@ -198,26 +254,39 @@ def tools_node(state: dict, conn) -> dict:
         }
 
     if intent == "refund":
-        out = return_tools.calculate_refund(conn, cid, oid, sku, as_of=as_of)
+        out = return_tools.calculate_refund(conn, cid, oid, sku, reason=reason, as_of=as_of)
         state["tools_invoked"].append({
             "tool": "calculate_refund",
-            "input": {"order_id": oid, "sku": sku},
+            "input": {"order_id": oid, "sku": sku, "reason": reason},
             "output": out
         })
-        _merge_tool_fields(state, out)
+        _merge_tool_fields(state, out, conn)
         if out["result"] == "NOT_AUTHORIZED":
             return {"answer": refusal_uniform(), "answer_type": "refused", "refused": True}
+        if out["result"] == "CONFLICT":
+            return {
+                "answer": "Our sources conflict on the fee calculation and the precedence policy cannot decide. Please contact customer support.",
+                "answer_type": "conflict_flagged"
+            }
+        if out["result"] == "CLARIFICATION_NEEDED":
+            return {
+                "answer": f"Order {oid} has multiple items. Please specify which SKU you wish to return for refund.",
+                "answer_type": "clarification_needed"
+            }
+        if out["result"] == "ALREADY_RETURNED":
+            return {
+                "answer": "Unfortunately this return is not possible: already returned.",
+                "answer_type": "calculated"
+            }
         if out["result"] == "ELIGIBLE":
-            state["assumptions"].extend(["Reason not stated: assuming change of mind."])
+            if state.get("reason") is None:
+                state["assumptions"].append("Reason not stated: assuming change of mind.")
             extra = " This exceeds the auto-approval limit and needs human approval." \
                     if out.get("requires_human_approval") else ""
-            full_o = order_tools.get_order(conn, cid, oid)
-            pm = full_o["order"].get("payment_method") if full_o and full_o.get("order") else None
-            pm_note = f" Per policy, refunds are credited to your original payment method ({pm}) once the returned item is picked up and inspected." if pm else ""
             return {
                 "answer": f"Your refund would be {out['refund_amount']} "
                           f"(gross {out['gross_amount']} - restocking fee {out['restocking_fee']}"
-                          f" - reverse shipping {out['reverse_shipping_fee']}).{extra}{pm_note}",
+                          f" - reverse shipping {out['reverse_shipping_fee']}).{extra}",
                 "answer_type": "calculated",
                 "explanation": "Refund computed by a deterministic tool from the order record "
                                "and the rule registry, using net price."
@@ -231,13 +300,13 @@ def tools_node(state: dict, conn) -> dict:
         if not sku:
             return {"answer": "Which product (SKU) should I raise the return for?",
                     "answer_type": "clarification_needed"}
-        out = return_tools.raise_return(conn, cid, oid, sku, as_of=as_of)
+        out = return_tools.raise_return(conn, cid, oid, sku, reason=reason, as_of=as_of)
         state["tools_invoked"].append({
             "tool": "raise_return",
-            "input": {"order_id": oid, "sku": sku},
+            "input": {"order_id": oid, "sku": sku, "reason": reason},
             "output": out
         })
-        _merge_tool_fields(state, out)
+        _merge_tool_fields(state, out, conn)
         if out["result"] in ("RETURN_RAISED",):
             return {
                 "answer": f"Return {out['return_id']} raised. Expected refund: {out['refund_amount']}.",
@@ -257,6 +326,9 @@ def tools_node(state: dict, conn) -> dict:
             "input": {"order_id": oid, "sku": sku},
             "output": out
         })
+        cit = citation_for(conn, "WAR-POL-2024", "1")
+        if not any(c.get("doc_id") == cit["doc_id"] and c.get("section") == cit["section"] for c in state["citations"]):
+            state["citations"].append(cit)
         if out["result"] == "NOT_AUTHORIZED":
             return {"answer": refusal_uniform(), "answer_type": "refused", "refused": True}
         if out["result"] in ("VALID", "EXPIRED"):
@@ -273,96 +345,134 @@ def tools_node(state: dict, conn) -> dict:
     return {}
 
 def composite_node(state: dict, conn, retriever) -> dict:
-    """Composite Specialist Agent: executes multi-step plans and what-if hypothetical simulations."""
+    """Composite Specialist Agent: executes multi-step plans and what-if hypothetical simulations (R6)."""
     intent = state.get("intent")
     as_of = state.get("as_of_date") or date.today().isoformat()
     cid, oid = state.get("customer_id"), state.get("order_id")
-    cat = state.get("category") or "ELECTRONICS"
+    cat = state.get("category")
     days_offset = state.get("days_offset")
     what_if_tier = state.get("what_if_tier")
+    pname = state.get("product_name")
 
     if intent == "multi_step":
-        # Question pattern: "My headphones stopped working after 41 days. Can I return them, and if not, what can I do?"
         days = days_offset or 41
-        
-        # Step 1: Return eligibility check
-        win_res = get_rule(conn, "return_window_days", cat, "STANDARD", as_of)
-        window = int(win_res.winner.value) if win_res.winner else 7
-        if win_res.winner:
-            state["applied_rules"].append({
-                "rule_id": win_res.winner.rule_id,
-                "value": win_res.winner.value,
-                "source_doc_id": win_res.winner.source_doc_id,
-                "source_section": win_res.winner.source_section
-            })
-            state["citations"].append({
-                "doc_id": win_res.winner.source_doc_id,
-                "title": "Return Policy / Circular",
-                "section": win_res.winner.source_section,
-                "page": 1,
-                "version": "1.0",
-                "effective_from": win_res.winner.effective_from
-            })
-        
-        return_eligible = (days <= window)
+        reason = state.get("reason") or "DEFECTIVE"
+
+        # 1. Resolve order / item identity
+        sku = state.get("sku")
+        if not oid:
+            if not cid or not known_customer(conn, cid):
+                return {"answer": SIGN_IN_MSG, "answer_type": "refused", "refused": True}
+            rows = order_tools.list_customer_orders(conn, cid)
+            if not rows:
+                return {"answer": refusal_uniform(), "answer_type": "refused", "refused": True}
+            matching = []
+            for r in rows:
+                full_o = order_tools.get_order(conn, cid, r["order_id"])
+                if full_o:
+                    for itm in full_o["items"]:
+                        p_row = conn.execute("SELECT category, name FROM products WHERE sku = ?", (itm["sku"],)).fetchone()
+                        if p_row:
+                            if sku and itm["sku"] == sku:
+                                matching.append((r["order_id"], itm["sku"], p_row["name"], r["order_date"], p_row["category"]))
+                            elif pname:
+                                if pname.lower() in p_row["name"].lower():
+                                    matching.append((r["order_id"], itm["sku"], p_row["name"], r["order_date"], p_row["category"]))
+                            elif cat and p_row["category"].upper() == cat.upper():
+                                matching.append((r["order_id"], itm["sku"], p_row["name"], r["order_date"], p_row["category"]))
+            if len(matching) > 1:
+                return {
+                    "answer": "You have multiple relevant orders: " +
+                              ", ".join(f"{m[0]} ({m[2]} on {m[3]})" for m in matching) +
+                              ". Which order is this about?",
+                    "answer_type": "clarification_needed"
+                }
+            elif len(matching) == 1:
+                oid = matching[0][0]
+                sku = matching[0][1]
+                cat = matching[0][4]
+            else:
+                return {
+                    "answer": "Which order is this about? Please share your order ID.",
+                    "answer_type": "clarification_needed"
+                }
+
+        # 2. Check return eligibility with days override
+        out_elig = return_tools.check_return_eligibility(conn, cid, oid, sku, reason=reason, as_of=as_of, delivered_days_override=days)
         state["tools_invoked"].append({
             "tool": "check_return_eligibility",
-            "input": {"category": cat, "days_since_delivery": days},
-            "output": {"result": "ELIGIBLE" if return_eligible else "OUT_OF_WINDOW", "window_days": window}
+            "input": {"order_id": oid, "sku": sku, "delivered_days_override": days},
+            "output": out_elig
         })
+        _merge_tool_fields(state, out_elig, conn)
+        window = out_elig.get("window_days", 7)
+        cat = out_elig.get("category", cat or "ELECTRONICS")
 
-        # Step 2: Warranty check (electronics standard warranty is 12 months = 365 days)
-        warranty_days = 365
-        warranty_valid = (days <= warranty_days)
+        # 3. Check warranty with days override
+        out_war = check_warranty(conn, cid, oid, sku, as_of=as_of, delivered_days_override=days)
         state["tools_invoked"].append({
             "tool": "check_warranty",
-            "input": {"category": cat, "days_since_delivery": days},
-            "output": {"result": "VALID" if warranty_valid else "EXPIRED", "warranty_months": 12}
+            "input": {"order_id": oid, "sku": sku, "delivered_days_override": days},
+            "output": out_war
         })
+        cit_war = citation_for(conn, "WAR-POL-2024", "1")
+        if not any(c.get("doc_id") == cit_war["doc_id"] and c.get("section") == cit_war["section"] for c in state["citations"]):
+            state["citations"].append(cit_war)
 
-        # Step 3: Procedural claim steps retrieval
-        war_hits = retriever.search("warranty claim procedure steps", category=cat, as_of=as_of, top_k=2)
-        claim_doc = "WAR-POL-2024"
-        claim_sec = "4.1"
-        if war_hits:
-            claim_doc = war_hits[0]["doc_id"]
-            claim_sec = war_hits[0].get("section", "4.1")
-            state["citations"].append({
-                "doc_id": claim_doc,
-                "title": war_hits[0].get("title", "Warranty Policy"),
-                "section": claim_sec,
-                "page": war_hits[0].get("page", 1),
-                "version": war_hits[0].get("version", "1.0"),
-                "effective_from": war_hits[0].get("effective_from", "2024-07-01")
-            })
+        # 4. Retrieve warranty claim procedure
+        step_rows = conn.execute(
+            "SELECT section, text FROM chunks WHERE doc_id = 'WAR-POL-2024' AND section LIKE '2%' ORDER BY section"
+        ).fetchall()
+        for s_row in step_rows:
+            cit_step = citation_for(conn, "WAR-POL-2024", s_row["section"])
+            if not any(c.get("doc_id") == cit_step["doc_id"] and c.get("section") == cit_step["section"] for c in state["citations"]):
+                state["citations"].append(cit_step)
 
-        state["assumptions"].append(f"Assumed {days} days since delivery and hardware defect covered under manufacturer warranty.")
+        claim_steps = "; ".join(r["text"].strip() for r in step_rows) if step_rows else "Contact support with your order id and a description of the fault."
 
-        ans = (
-            f"You cannot return the {cat.lower()} item because {days} days exceeds the {window}-day return window. "
-            f"However, your item is covered under the 12-month manufacturer warranty. "
-            f"To raise a warranty claim, contact the manufacturer authorized service centre or ShopEasy support "
-            f"with your purchase invoice ({claim_doc} Section {claim_sec})."
-        )
+        # 5. Document assumptions
+        state["assumptions"].append(f"Assuming the item was delivered {days} days ago.")
+        if state.get("reason") is None:
+            state["assumptions"].append("Assuming defect covered under warranty.")
+
+        # 6. Compose answer
+        months = out_war.get("warranty_months", 12)
+        if out_war.get("result") == "VALID":
+            ans = (
+                f"You cannot return the {cat.lower()} item because {days} days exceeds the {window}-day return window. "
+                f"However, your item is covered under the {months}-month warranty (valid until {out_war.get('warranty_end')}). "
+                f"To raise a warranty claim: {claim_steps} (WAR-POL-2024 §2)."
+            )
+        else:
+            ans = (
+                f"You cannot return the {cat.lower()} item because {days} days exceeds the {window}-day return window. "
+                f"Additionally, the {months}-month warranty has expired."
+            )
+
         return {
             "answer": ans,
             "answer_type": "calculated",
-            "explanation": f"Multi-step evaluation: return window ({window} days) has expired, but product warranty (12 months) remains active. Procedural steps retrieved from {claim_doc}."
+            "explanation": f"Multi-step evaluation: return window ({window} days) vs {days} days, followed by warranty check and claim procedure."
         }
 
     if intent == "what_if":
-        # What-if scenario simulation
         if days_offset is not None:
-            win_res = get_rule(conn, "return_window_days", cat, "STANDARD", as_of)
-            window = int(win_res.winner.value) if win_res.winner else 7
-            if win_res.winner:
-                state["applied_rules"].append({
-                    "rule_id": win_res.winner.rule_id,
-                    "value": win_res.winner.value,
-                    "source_doc_id": win_res.winner.source_doc_id,
-                    "source_section": win_res.winner.source_section
-                })
             state["assumptions"].append(f"Hypothetical scenario: returning {days_offset} days after delivery.")
+            if oid and cid and owns_order(conn, cid, oid):
+                out = return_tools.check_return_eligibility(conn, cid, oid, state.get("sku"), reason=state.get("reason") or "CHANGED_MIND", as_of=as_of, delivered_days_override=days_offset)
+                state["tools_invoked"].append({"tool": "check_return_eligibility", "input": {"order_id": oid, "delivered_days_override": days_offset}, "output": out})
+                _merge_tool_fields(state, out, conn)
+                window = out.get("window_days", 7)
+                cat = out.get("category", cat or "ELECTRONICS")
+            else:
+                cat = cat or "ELECTRONICS"
+                state["assumptions"].append(f"Hypothetical scenario: evaluated for {cat.lower()} category.")
+                w = get_rule(conn, "return_window_days", cat, "STANDARD", as_of)
+                window = int(w.winner.value) if w.winner else 7
+                if w.winner:
+                    state["applied_rules"].append({"rule_id": w.winner.rule_id, "value": w.winner.value, "source_doc_id": w.winner.source_doc_id, "source_section": w.winner.source_section})
+                    state["citations"].append(citation_for(conn, w.winner.source_doc_id, w.winner.source_section))
+
             if days_offset <= window:
                 ans = f"If returned after {days_offset} days, it would still be eligible for return as the {cat.lower()} window is {window} days."
             else:
@@ -375,20 +485,23 @@ def composite_node(state: dict, conn, retriever) -> dict:
 
         if what_if_tier:
             state["assumptions"].append(f"Hypothetical scenario: customer evaluated under {what_if_tier} tier.")
-            if oid and cid:
-                std_out = return_tools.calculate_refund(conn, cid, oid, as_of=as_of, tier_override="STANDARD")
-                tier_out = return_tools.calculate_refund(conn, cid, oid, as_of=as_of, tier_override=what_if_tier)
+            if oid and cid and owns_order(conn, cid, oid):
+                act_tier = order_tools.customer_tier(conn, cid)
+                std_out = return_tools.calculate_refund(conn, cid, oid, state.get("sku"), as_of=as_of, tier_override=act_tier)
+                tier_out = return_tools.calculate_refund(conn, cid, oid, state.get("sku"), as_of=as_of, tier_override=what_if_tier)
                 state["tools_invoked"].append({"tool": "calculate_refund", "input": {"tier": what_if_tier}, "output": tier_out})
-                _merge_tool_fields(state, tier_out)
+                _merge_tool_fields(state, tier_out, conn)
                 ans = (
-                    f"As a {what_if_tier} member, restocking fee is waived (0%) and reverse shipping fee is waived. "
-                    f"Your refund would be {tier_out.get('refund_amount')} compared to {std_out.get('refund_amount')} under Standard tier."
+                    f"Under {what_if_tier}: restocking fee is waived ({tier_out.get('restocking_fee')}) and reverse shipping is {tier_out.get('reverse_shipping_fee')} "
+                    f"→ refund {tier_out.get('refund_amount')} (as {act_tier}: {std_out.get('refund_amount')})."
                 )
             else:
-                ans = (
-                    f"Under the {what_if_tier} tier, restocking fees are waived (0% instead of 10%) and reverse shipping fees are waived. "
-                    f"Eligible returns receive a 100% refund of the net purchase price."
-                )
+                r_tier = get_rule(conn, "restocking_fee_pct", cat, what_if_tier, as_of)
+                val = r_tier.winner.value if r_tier.winner else "0"
+                if r_tier.winner:
+                    state["applied_rules"].append({"rule_id": r_tier.winner.rule_id, "value": r_tier.winner.value, "source_doc_id": r_tier.winner.source_doc_id, "source_section": r_tier.winner.source_section})
+                    state["citations"].append(citation_for(conn, r_tier.winner.source_doc_id, r_tier.winner.source_section))
+                ans = f"Under the {what_if_tier} tier, the restocking fee is {val}%."
             return {
                 "answer": ans,
                 "answer_type": "calculated",
@@ -398,50 +511,58 @@ def composite_node(state: dict, conn, retriever) -> dict:
     return {}
 
 def retrieve_node(state: dict, conn, retriever) -> dict:
+    from .policy import policy_fact
+    tier = (order_tools.customer_tier(conn, state["customer_id"])
+            if state.get("customer_id") and known_customer(conn, state["customer_id"]) else None)
+    fact = policy_fact(state, conn, tier)
+    if fact:
+        return fact
+
     hits = retriever.search(state["question"], category=state.get("category"),
                             as_of=state["as_of_date"], top_k=6)
     if not hits:
         return {"answer": NOT_FOUND_MSG, "answer_type": "not_found"}
 
-    # Check for unresolvable conflict among top hits
-    if len(hits) >= 2:
-        h1, h2 = hits[0], hits[1]
-        if (h1.get("authority_level") == h2.get("authority_level") and
-            h1.get("eff_from_i") == h2.get("eff_from_i") and
-            h1["doc_id"] != h2["doc_id"] and
-            h1.get("score", 0) > 0.8 and h2.get("score", 0) > 0.8):
-            state["citations"].append({"doc_id": h1["doc_id"], "title": h1["title"],
-                                       "section": h1.get("section", ""), "page": h1.get("page", 1),
-                                       "version": h1.get("version", ""),
-                                       "effective_from": h1.get("effective_from", "")})
-            state["citations"].append({"doc_id": h2["doc_id"], "title": h2["title"],
-                                       "section": h2.get("section", ""), "page": h2.get("page", 1),
-                                       "version": h2.get("version", ""),
-                                       "effective_from": h2.get("effective_from", "")})
-            state["conflicts_detected"].append({
-                "parameter": "policy_statement",
-                "winner": "unresolved",
-                "resolution": [f"Conflicting sources: {h1['doc_id']} and {h2['doc_id']}"]
-            })
-            return {
-                "answer": f"Conflicting policies detected between {h1['doc_id']} and {h2['doc_id']}. Please contact customer support for clarification.",
-                "answer_type": "conflict_flagged",
-                "explanation": "Unresolved conflict between equal authority sources."
-            }
+    # Handle level 5 sources (informational only, never the main answer)
+    valid_hits = [h for h in hits if int(h.get("authority_level", 4)) <= 4]
+    has_l5 = any(int(h.get("authority_level", 4)) == 5 for h in hits)
+    if not valid_hits:
+        return {"answer": NOT_FOUND_MSG, "answer_type": "not_found"}
 
-    best = hits[0]
-    state["citations"].append({
-        "doc_id": best["doc_id"],
-        "title": best["title"],
-        "section": best.get("section", ""),
-        "page": best.get("page", 1),
-        "version": best.get("version", ""),
-        "effective_from": best.get("effective_from", "")
-    })
-    ans = "\n".join(l.lstrip("#").strip() for l in best["text"].strip().splitlines())
+    best = valid_hits[0]
+    cit = citation_for(conn, best["doc_id"], best.get("section", ""))
+    state["citations"].append(cit)
+
+    # For procedure questions, check for sibling step chunks
+    q_lower = state["question"].lower()
+    is_procedure = any(p in q_lower for p in ("how do i", "how can i", "how to", "steps to", "procedure"))
+    if is_procedure and best.get("section"):
+        parent_sec = best["section"].split(".")[0]
+        sibs = conn.execute(
+            "SELECT section, text FROM chunks WHERE doc_id = ? AND (section LIKE ? OR section = ?) ORDER BY section",
+            (best["doc_id"], f"{parent_sec}.%", parent_sec)
+        ).fetchall()
+        if len(sibs) > 1:
+            ans = " ".join(s["text"].strip() for s in sibs)
+        else:
+            ans = best["text"].strip()
+    else:
+        ans = best["text"].strip()
+
+    # Clean leading headings and format
+    ans = "\n".join(l.lstrip("#").strip() for l in ans.splitlines() if not l.strip().startswith("#"))
     ans = " ".join(ans.split())
+
+    # Cut cleanly at sentence boundary if very long
     if len(ans) > 450:
-        ans = ans[:450] + "..."
+        cut = ans[:450].rfind(".")
+        if cut > 100:
+            ans = ans[:cut + 1]
+
+    if has_l5:
+        l5_doc = next(h["doc_id"] for h in hits if int(h.get("authority_level", 4)) == 5)
+        ans += f" An unofficial source ({l5_doc}, level 5) says something different; it is informational only and has no effect."
+
     return {
         "answer": ans,
         "answer_type": "retrieved_fact",
@@ -449,10 +570,30 @@ def retrieve_node(state: dict, conn, retriever) -> dict:
     }
 
 def compose_node(state: dict) -> dict:
-    """Synthesis agent: checks that final answers are strictly grounded and formatted."""
-    if state.get("answer"):
+    """Synthesis agent: checks that final answers are strictly grounded and formatted (R5/R9)."""
+    if not state.get("answer"):
+        return {"answer": NOT_FOUND_MSG, "answer_type": "not_found"}
+    if state["answer_type"] in ("refused", "not_found", "clarification_needed") or settings.MOCK_LLM:
         return {}
-    return {"answer": NOT_FOUND_MSG, "answer_type": "not_found"}
+    facts = {
+        "question": state["question"],
+        "answer": state["answer"],
+        "assumptions": state["assumptions"],
+        "tools": [t["output"] for t in state["tools_invoked"]],
+        "rules": state["applied_rules"]
+    }
+    try:
+        from ..llm.client import compose_answer
+        text, tokens = compose_answer(facts)
+        allowed = json.dumps(facts, default=str)
+        nums = lambda s: set(re.findall(r"\d+(?:\.\d+)?", s))
+        ids = lambda s: set(re.findall(r"\bO-\d{6}\b|\bC\d{4}\b|\bSKU-[A-Z]\d{3}\b", s))
+        if text and nums(text) <= nums(allowed) and ids(text) <= ids(allowed):
+            return {"explanation": text, "llm_calls": state.get("llm_calls", 0) + 1,
+                    "tokens": state.get("tokens", 0) + tokens}
+    except Exception:
+        pass
+    return {}
 
 def finalize_node(state: dict) -> dict:
     atype = state.get("answer_type")

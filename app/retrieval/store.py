@@ -6,6 +6,7 @@ from ..config import settings
 
 try:
     import chromadb
+    from chromadb.utils import embedding_functions
     _HAS_CHROMA = True
 except ImportError:
     _HAS_CHROMA = False
@@ -15,12 +16,21 @@ class VectorStore:
         self.conn = conn
         self._ensure_table()
         self.client = None
+        self.last_error = None
         if _HAS_CHROMA:
             try:
                 self.client = chromadb.PersistentClient(path=settings.CHROMA_PATH)
-                self.col = self.client.get_or_create_collection("policies")
-            except Exception:
+                try:
+                    embed_fn = embedding_functions.SentenceTransformerEmbeddingFunction(model_name=settings.EMBED_MODEL)
+                except Exception:
+                    embed_fn = embedding_functions.DefaultEmbeddingFunction()
+                self.col = self.client.get_or_create_collection(
+                    "policies",
+                    embedding_function=embed_fn,
+                    metadata={"hnsw:space": "cosine"})
+            except Exception as e:
                 self.client = None
+                self.last_error = repr(e)
 
     def _ensure_table(self):
         self.conn.execute("""CREATE TABLE IF NOT EXISTS chunks(
@@ -35,7 +45,7 @@ class VectorStore:
         with self.conn:
             for c in chunks:
                 self.conn.execute("INSERT OR REPLACE INTO chunks VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (c["chunk_id"], c["doc_id"], c["title"], c.get("section", ""), c.get("page", 1),
+                    (c["chunk_id"], c["doc_id"], c.get("title", ""), c.get("section", ""), c.get("page", 1),
                      c.get("version", ""), c.get("authority_level", 4), c.get("effective_from", ""),
                      c.get("effective_to", ""), int(c.get("effective_from", "00000000").replace("-", "") or 0),
                      int(c.get("effective_to", "99999999").replace("-", "") or 99999999),
@@ -44,15 +54,26 @@ class VectorStore:
             try:
                 self.col.upsert(ids=[c["chunk_id"] for c in chunks],
                                 documents=[c["text"] for c in chunks],
-                                metadatas=[{k: c.get(k) for k in
-                                ("doc_id","title","section","page","version","authority_level",
-                                 "eff_from_i","eff_to_i","scope_categories","scope_tiers")} for c in chunks])
-            except Exception:
-                pass
+                                metadatas=[self._chroma_meta(c) for c in chunks])
+            except Exception as e:                     # never swallow silently: surface in /health
+                self.last_error = repr(e)
         return len(chunks)
+
+    @staticmethod
+    def _chroma_meta(c: dict) -> dict:
+        """Chroma `where` compares numbers only, so dates are YYYYMMDD ints. No None values allowed."""
+        i = lambda d, dflt: int((d or "").replace("-", "") or dflt)
+        return {"doc_id": c["doc_id"], "title": c.get("title", ""), "section": c.get("section", ""),
+                "page": int(c.get("page", 1)), "version": c.get("version", ""),
+                "authority_level": int(c.get("authority_level", 4)),
+                "eff_from_i": i(c.get("effective_from"), 0), "eff_to_i": i(c.get("effective_to"), 99999999),
+                "scope_categories": c.get("scope_categories", "ALL"), "scope_tiers": c.get("scope_tiers", "ALL")}
 
     def delete_doc(self, doc_id: str):
         with self.conn: self.conn.execute("DELETE FROM chunks WHERE doc_id = ?", (doc_id,))
+        if self.client is not None:                    # re-ingest must not leave stale vectors
+            try: self.col.delete(where={"doc_id": doc_id})
+            except Exception: pass
 
     STOPWORDS = {"the","what","how","you","your","for","are","can","does","did","have","has",
                  "with","when","where","who","this","that","from","will","would","should",
@@ -98,10 +119,13 @@ class VectorStore:
                                                  {"eff_to_i": {"$gte": as_of_i}}]})
             out = []
             for i, cid in enumerate(res["ids"][0]):
-                m = res["metadatas"][0][i]
+                score = 1.0 - float(res["distances"][0][i])          # cosine similarity
+                if score < settings.MIN_SCORE: continue
                 row = self.conn.execute("SELECT * FROM chunks WHERE chunk_id = ?", (cid,)).fetchone()
                 if row:
-                    out.append(dict(row))
+                    d = dict(row); d["score"] = round(score, 4)
+                    out.append(d)
             return out[:top_k]
-        except Exception:
+        except Exception as e:
+            self.last_error = repr(e)
             return None

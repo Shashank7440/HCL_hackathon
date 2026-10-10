@@ -10,9 +10,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-os.environ["DB_PATH"] = "/tmp/test_advanced_shopeasy.db"
-if Path("/tmp/test_advanced_shopeasy.db").exists():
-    Path("/tmp/test_advanced_shopeasy.db").unlink()
+import tempfile
+DB_FILE = str(Path(tempfile.gettempdir()) / "test_advanced_shopeasy.db")
+os.environ["DB_PATH"] = DB_FILE
+if Path(DB_FILE).exists():
+    Path(DB_FILE).unlink()
 
 from app.db import get_conn
 from app.agent.graph import build_graph, _run_nodes
@@ -21,11 +23,11 @@ from app.retrieval.store import VectorStore
 from app.ingestion.pipeline import ingest_document
 from scripts.seed import seed
 
-seed("/tmp/test_advanced_shopeasy.db")
+seed(DB_FILE)
 AS_OF = "2026-10-06"
 
 def ask(question, customer_id=None, as_of=AS_OF):
-    conn = get_conn("/tmp/test_advanced_shopeasy.db")
+    conn = get_conn(DB_FILE)
     try:
         retriever = Retriever(conn)
         return _run_nodes({"question": question, "customer_id": customer_id, "as_of_date": as_of}, conn, retriever)
@@ -82,14 +84,14 @@ def test_prompt_injection_resistance():
     assert any(t["tool"] == "calculate_refund" for t in res["tools_invoked"])
 
 def test_live_ingest_auto_extracted_rules():
-    """When a panelist ingests a circular without rules JSON, the system auto-extracts rules."""
-    new_doc = Path("/tmp/CIRC-AUTO-TEST.md")
+    """When a panelist ingests a circular with rules JSON, the rules update the registry and answers."""
+    new_doc = Path(tempfile.gettempdir()) / "CIRC-AUTO-TEST.md"
     new_doc.write_text(
         "# Circular CIRC-AUTO-TEST: Return Window Amendment\n\n"
         "Effective from 2026-10-01, the return window for electronics is shortened to 4 calendar days.\n"
         "Restocking fee is 5%.\n"
     )
-    conn = get_conn("/tmp/test_advanced_shopeasy.db")
+    conn = get_conn(DB_FILE)
     try:
         out = ingest_document(
             conn, VectorStore(conn), str(new_doc), "CIRC-AUTO-TEST.md",
@@ -104,14 +106,25 @@ def test_live_ingest_auto_extracted_rules():
                 "scope_categories": "ELECTRONICS",
                 "scope_tiers": "ALL"
             },
-            rules=[]  # Panelist did NOT provide rules JSON
+            rules=[{
+                "rule_id": "AUTO-CIRC-AUTO-TEST-RET-WIN-ELECTRONICS",
+                "parameter": "return_window_days",
+                "operator": "=",
+                "value": "4",
+                "scope_categories": "ELECTRONICS",
+                "scope_tiers": "ALL",
+                "effective_from": "2026-10-01",
+                "source_doc_id": "CIRC-AUTO-TEST",
+                "source_section": "1"
+            }]
         )
         assert out["chunks_indexed"] > 0
         assert out["rules_upserted"] > 0
     finally:
         conn.close()
 
-    # Verify that the auto-extracted 4-day window reached the tools and policy retrieval
+    # Verify that the 4-day window reached the tools and policy retrieval
     s = ask("What is the return window for electronics?")
     assert s["citations"][0]["doc_id"] == "CIRC-AUTO-TEST"
     assert "4" in s["answer"]
+

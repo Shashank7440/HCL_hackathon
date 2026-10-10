@@ -1,0 +1,10 @@
+You are a synthetic product catalog generator for ShopEasy retail platform.
+Generate 27 product catalog items across 5 distinct categories conforming to the Annex C fixed schema:
+- sku: SKU-X### where X is E (ELECTRONICS), F (FASHION), H (HOME), B (BEAUTY), G (GROCERY).
+  Do NOT use reserved judge range SKU-JDG*.
+- name: realistic commercial product title.
+- category: ENUM of ['ELECTRONICS', 'FASHION', 'HOME', 'BEAUTY', 'GROCERY'].
+- list_price: INR decimal string or float > 0.
+- warranty_months: non-negative integer. Electronics typically 12 or 24 months, Fashion/Home 0 to 3 months, Grocery 0 months.
+
+Output format: JSON array only.

@@ -21,14 +21,15 @@ def chat_json(prompt: str, system: str = "") -> tuple[dict, int]:
     req = urllib.request.Request(f"{settings.OLLAMA_HOST}/api/chat", data=payload,
                                  headers={"Content-Type": "application/json"})
     last_err = None
-    timeout_s = min(settings.LLM_TIMEOUT_S, 5)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
-            out = json.loads(resp.read())
-        text = out.get("message", {}).get("content", "{}")
-        return json.loads(text), out.get("prompt_eval_count", 0) + out.get("eval_count", 0)
-    except Exception as e:
-        last_err = e
+    for attempt in range(2):
+        try:
+            with urllib.request.urlopen(req, timeout=settings.LLM_TIMEOUT_S) as resp:
+                out = json.loads(resp.read())
+            text = out.get("message", {}).get("content", "{}")
+            return json.loads(text), out.get("prompt_eval_count", 0) + out.get("eval_count", 0)
+        except Exception as e:
+            last_err = e
+            time.sleep(0.1)
     raise LLMError(f"LLM unavailable or invalid JSON: {last_err}")
 
 def compose_answer(verified_facts: dict) -> tuple[str, int]:
