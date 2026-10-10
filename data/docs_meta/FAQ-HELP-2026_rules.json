@@ -1,0 +1,16 @@
+[
+  {
+    "rule_id": "FAQ-ELEC-01",
+    "description": "FAQ claims electronics returns within 15 days (stale)",
+    "parameter": "return_window_days",
+    "operator": "=",
+    "value": "15",
+    "scope_categories": "ELECTRONICS",
+    "scope_tiers": "ALL",
+    "effective_from": "2026-09-15",
+    "effective_to": "",
+    "source_doc_id": "FAQ-HELP-2026",
+    "source_section": "Q3",
+    "auto_extracted": 0
+  }
+]

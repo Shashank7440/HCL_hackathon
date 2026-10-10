@@ -1,0 +1,16 @@
+[
+  {
+    "rule_id": "RET-SHIP-01",
+    "description": "Reverse shipping fee (INR)",
+    "parameter": "reverse_shipping_fee",
+    "operator": "=",
+    "value": "60",
+    "scope_categories": "ALL",
+    "scope_tiers": "ALL",
+    "effective_from": "2024-07-01",
+    "effective_to": "",
+    "source_doc_id": "SHIP-TERMS-2024",
+    "source_section": "2.3",
+    "auto_extracted": 0
+  }
+]

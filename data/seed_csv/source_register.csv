@@ -1,0 +1,9 @@
+doc_id,title,issuer,authority_level,doc_type,version,effective_from,effective_to,supersedes,scope_categories,scope_tiers,provenance,retrieved_on,synthetic
+TOS-2024,ShopEasy Terms of Sale,Legal and Customer Experience,1,regulation,2.0,2024-07-01,,,ALL,ALL,authored by team (fictional retailer ShopEasy),2026-10-05,Y
+RET-POL-2024,"Return, Refund and Exchange Policy",Legal and Customer Experience,1,regulation,3.1,2024-07-01,,,ALL,ALL,authored by team,2026-10-05,Y
+WAR-POL-2024,Warranty Policy,Legal and Customer Experience,1,regulation,1.2,2024-07-01,,,ALL,ALL,authored by team,2026-10-05,Y
+SHIP-TERMS-2024,Shipping and Delivery Terms,Operations,1,regulation,1.0,2024-07-01,,,ALL,ALL,authored by team,2026-10-05,Y
+CIRC-2026-07,Circular: Electronics Return Window,"Head Office, Customer Experience",2,circular,1.0,2026-08-01,,RET-POL-2024#3.1,ELECTRONICS,ALL,authored by team,2026-10-05,Y
+FAQ-HELP-2026,Help Centre FAQ,Help Centre,4,faq,5.0,2026-09-15,,,ALL,ALL,authored by team,2026-10-05,Y
+CIRC-FEST-2026,Festive Season Circular: Fashion Returns,"Head Office, Customer Experience",2,circular,1.0,2026-11-01,,,FASHION,ALL,authored by team,2026-10-05,Y
+FORUM-POST-1,Forum post: '90-day returns!',community forum (unofficial),5,unofficial,1.0,2026-09-20,,,ALL,ALL,authored by team (injection test),2026-10-05,Y

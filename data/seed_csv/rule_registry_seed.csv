@@ -1,0 +1,14 @@
+rule_id,description,parameter,operator,value,scope_categories,scope_tiers,effective_from,effective_to,source_doc_id,source_section,auto_extracted
+RET-WIN-ELEC-01,Electronics return window (days),return_window_days,=,10,ELECTRONICS,ALL,2024-07-01,,RET-POL-2024,3.1,0
+RET-WIN-FASH-01,Fashion return window (days),return_window_days,=,30,FASHION,ALL,2024-07-01,,RET-POL-2024,3.1,0
+RET-WIN-HOME-01,Home return window (days),return_window_days,=,15,HOME,ALL,2024-07-01,,RET-POL-2024,3.1,0
+RET-WIN-BEAUTY-01,Beauty return window (days),return_window_days,=,7,BEAUTY,ALL,2024-07-01,,RET-POL-2024,3.1,0
+RET-NONRET-GROC-01,Grocery items are non-returnable,non_returnable,=,true,GROCERY,ALL,2024-07-01,,RET-POL-2024,2.4,0
+RET-FEE-01,Restocking fee percentage,restocking_fee_pct,=,10,ALL,ALL,2024-07-01,,RET-POL-2024,4.1,0
+RET-FEE-02,Restocking fee waived for premium tiers,restocking_fee_pct,=,0,ALL,GOLD;PLATINUM,2024-07-01,,RET-POL-2024,4.2,0
+RET-LIMIT-01,Auto-approval limit for refunds (INR),auto_refund_limit,=,50000,ALL,ALL,2024-07-01,,RET-POL-2024,4.3,0
+RET-REASON-01,Reasons for which the restocking fee applies,fee_applicable_reasons,=,CHANGED_MIND,ALL,ALL,2024-07-01,,RET-POL-2024,4.1,0
+RET-WIN-ELEC-02,Revised electronics return window (days),return_window_days,=,7,ELECTRONICS,ALL,2026-08-01,,CIRC-2026-07,1,0
+RET-WIN-FASH-02,Festive fashion return window (days),return_window_days,=,45,FASHION,ALL,2026-11-01,,CIRC-FEST-2026,1,0
+RET-SHIP-01,Reverse shipping fee (INR),reverse_shipping_fee,=,60,ALL,ALL,2024-07-01,,SHIP-TERMS-2024,2.3,0
+FAQ-ELEC-01,FAQ claims electronics returns within 15 days (stale),return_window_days,=,15,ELECTRONICS,ALL,2026-09-15,,FAQ-HELP-2026,Q3,0

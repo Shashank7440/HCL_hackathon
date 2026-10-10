@@ -1,0 +1,16 @@
+[
+  {
+    "rule_id": "RET-WIN-FASH-02",
+    "description": "Festive fashion return window (days)",
+    "parameter": "return_window_days",
+    "operator": "=",
+    "value": "45",
+    "scope_categories": "FASHION",
+    "scope_tiers": "ALL",
+    "effective_from": "2026-11-01",
+    "effective_to": "",
+    "source_doc_id": "CIRC-FEST-2026",
+    "source_section": "1",
+    "auto_extracted": 0
+  }
+]

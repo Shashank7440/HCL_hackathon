@@ -1,0 +1,165 @@
+[
+  {
+    "trace_id": "1e733dd7",
+    "timestamp": "2026-10-10T09:01:48Z",
+    "customer_id": null,
+    "question_category": "policy_fact",
+    "question_redacted": "What is the return window for electronics?",
+    "sources_retrieved": [
+      "CIRC-2026-07"
+    ],
+    "precedence_decisions": [],
+    "tools_invoked": [],
+    "applied_rules": [],
+    "answer_type": "retrieved_fact",
+    "model": "mock",
+    "llm_calls": 0,
+    "tokens": 0
+  },
+  {
+    "trace_id": "6736cf6c",
+    "timestamp": "2026-10-10T09:01:48Z",
+    "customer_id": "C1001",
+    "question_category": "refund",
+    "question_redacted": "How much refund will I get for order O-100001?",
+    "sources_retrieved": [
+      "CIRC-2026-07",
+      "RET-POL-2024",
+      "RET-POL-2024",
+      "SHIP-TERMS-2024",
+      "RET-POL-2024"
+    ],
+    "precedence_decisions": [
+      "RET-WIN-ELEC-02: RET-WIN-ELEC-01: superseded by CIRC-2026-07 (step 2)",
+      "RET-WIN-ELEC-02: FAQ-ELEC-01: lower authority (step 3)"
+    ],
+    "tools_invoked": [
+      {
+        "tool": "calculate_refund",
+        "input": {
+          "order_id": "O-100001",
+          "sku": null
+        },
+        "output": {
+          "result": "ELIGIBLE",
+          "gross_amount": "2999.00",
+          "restocking_fee_pct": "10",
+          "restocking_fee": "299.90",
+          "reverse_shipping_fee": "60.00",
+          "refund_amount": "2639.10",
+          "requires_human_approval": false,
+          "tier": "STANDARD",
+          "applied_rules": [
+            {
+              "rule_id": "RET-WIN-ELEC-02",
+              "value": "7",
+              "source_doc_id": "CIRC-2026-07",
+              "source_section": "1"
+            },
+            {
+              "rule_id": "RET-REASON-01",
+              "value": "CHANGED_MIND",
+              "source_doc_id": "RET-POL-2024",
+              "source_section": "4.1"
+            },
+            {
+              "rule_id": "RET-FEE-01",
+              "value": "10",
+              "source_doc_id": "RET-POL-2024",
+              "source_section": "4.1"
+            },
+            {
+              "rule_id": "RET-SHIP-01",
+              "value": "60",
+              "source_doc_id": "SHIP-TERMS-2024",
+              "source_section": "2.3"
+            },
+            {
+              "rule_id": "RET-LIMIT-01",
+              "value": "50000",
+              "source_doc_id": "RET-POL-2024",
+              "source_section": "4.3"
+            }
+          ],
+          "conflicts": [
+            {
+              "parameter": "return_window_days",
+              "winner": "RET-WIN-ELEC-02",
+              "resolution": [
+                "RET-WIN-ELEC-01: superseded by CIRC-2026-07 (step 2)",
+                "FAQ-ELEC-01: lower authority (step 3)"
+              ]
+            }
+          ],
+          "upcoming_changes": []
+        }
+      }
+    ],
+    "applied_rules": [
+      {
+        "rule_id": "RET-WIN-ELEC-02",
+        "value": "7",
+        "source_doc_id": "CIRC-2026-07",
+        "source_section": "1"
+      },
+      {
+        "rule_id": "RET-REASON-01",
+        "value": "CHANGED_MIND",
+        "source_doc_id": "RET-POL-2024",
+        "source_section": "4.1"
+      },
+      {
+        "rule_id": "RET-FEE-01",
+        "value": "10",
+        "source_doc_id": "RET-POL-2024",
+        "source_section": "4.1"
+      },
+      {
+        "rule_id": "RET-SHIP-01",
+        "value": "60",
+        "source_doc_id": "SHIP-TERMS-2024",
+        "source_section": "2.3"
+      },
+      {
+        "rule_id": "RET-LIMIT-01",
+        "value": "50000",
+        "source_doc_id": "RET-POL-2024",
+        "source_section": "4.3"
+      }
+    ],
+    "answer_type": "calculated",
+    "model": "mock",
+    "llm_calls": 0,
+    "tokens": 0
+  },
+  {
+    "trace_id": "8bb4ad4b",
+    "timestamp": "2026-10-10T09:01:49Z",
+    "customer_id": "C1001",
+    "question_category": "order_status",
+    "question_redacted": "Where is my order O-100002?",
+    "sources_retrieved": [],
+    "precedence_decisions": [],
+    "tools_invoked": [],
+    "applied_rules": [],
+    "answer_type": "refused",
+    "model": "mock",
+    "llm_calls": 0,
+    "tokens": 0
+  },
+  {
+    "trace_id": "c09580d7",
+    "timestamp": "2026-10-10T09:01:49Z",
+    "customer_id": null,
+    "question_category": "policy_fact",
+    "question_redacted": "Do you deliver to Antarctica?",
+    "sources_retrieved": [],
+    "precedence_decisions": [],
+    "tools_invoked": [],
+    "applied_rules": [],
+    "answer_type": "not_found",
+    "model": "mock",
+    "llm_calls": 0,
+    "tokens": 0
+  }
+]

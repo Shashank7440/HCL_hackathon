@@ -1,0 +1,620 @@
+
+
+HCLTech  |  Future Ready AI Engineer Hackathon
+AI-Powered Retail Customer Support Agent
+Problem Statement and Participant Guide
+
+Venue
+NIT campus (venue to be confirmed)
+Date
+To be announced
+Participation
+Teams of up to 4 members
+Build window
+One full day
+Organised by
+HCLTech Data & AI Practice
+Document version
+1.0 (for participants)
+
+Read Sections 1 to 3 before you write any code. Sections 4 to 7 are the contract your system must meet, and Section 9 explains exactly how you will be judged.
+
+1. About this hackathon
+This hackathon is part of HCLTech’s campus hiring for the AI Engineer role. We are not looking for the most impressive-looking demo. We are looking for people who can engineer AI systems that are accurate, grounded, safe and measurable, and who can explain every design decision they made.
+Item
+Details
+Use case
+One use case for all teams: the AI-Powered Retail Customer Support Agent
+Team size
+Up to 4 members. You build as a team; hiring decisions are made individually (see Section 9.4)
+Build window
+One full day, ending in a code freeze
+Judging
+30 minutes per team: 10 min demo, 10 min live testing by judges, 10 min Q&A
+Your data
+Public retailer policy documents (or a fictional retailer’s) plus synthetic customer and order data you generate with an LLM
+
+The principle behind the scoring
+The simplest architecture that meets the requirements scores highest. Add agents, tools and complexity only where a requirement genuinely needs them, and be ready to explain why.
+A team that builds a clean, well-tested system and says “we deliberately did not add a second agent because this step is deterministic” can outscore a team with seven agents it cannot explain.
+Day schedule
+Exact clock times will be announced at kickoff.
+Phase
+What happens
+Kickoff
+Walk-through of this guide, rules and Q&A on the problem statement
+Build
+Teams build. Mentors answer clarifying questions about this guide only
+Code freeze
+Final commit and git tag. No changes after the freeze
+Judging
+30-minute slot per team (Section 9.1)
+2. The problem
+A retailer’s customers ask the same kinds of questions all day: can I return this, how much will I get back, is it under warranty, where is my order. The answers live in return and refund policies, warranty terms, shipping rules, promotional circulars and help-centre pages, and in each customer’s own order history. Rules change through new circulars, differ by product category and customer tier, and the help-centre text is often out of date.
+Support agents answer inconsistently, and customers wait. Questions about a customer’s own situation (“Can I return my headphones?”) need the customer’s order records as well as the rules, and getting them wrong costs real money: a wrong refund, a wrongly refused return, or another customer’s data shown to the wrong person.
+Your mission
+Build an AI assistant that answers and acts on customer support questions using authorised retailer documents and authorised customer data and tools.
+Its responses must be accurate, grounded and explainable, it must never fabricate information, and it must never reveal or act on another customer’s data.
+2.1 The kinds of questions it must handle
+Type
+Example question
+What a good answer needs
+Policy fact
+“What is the return window for electronics?”
+The rule that applies today, with source, section, version and effective date
+Procedure
+“How do I raise a warranty claim?”
+Steps taken from the documents and cited. No invented steps
+Order data
+“Where is my order O-100008?”
+Looked up by a tool, only for the logged-in customer
+Personal eligibility
+“Can I return the headphones from order O-100001?”
+A deterministic check against the cited rule, explained in plain language
+Calculation
+“How much refund will I get for the laptop?”
+Computed by a tool from the order record and the fee rules, with the breakdown shown
+Multi-step / what-if
+“My headphones stopped working after 41 days. Can I return them, and if not, what can I do?”
+Several sources and tools combined (return window, warranty status, claim steps), with assumptions stated
+Not answerable
+“Do you deliver to Antarctica?”
+“I could not find this information in the authorised sources.”
+3. Functional requirements
+These requirements describe behaviour, not architecture. How you meet them (a single agent, specialist agents, a supervisor, or a fixed workflow) is your design decision, and you will be asked to justify it.
+R1 Knowledge retrieval
+Answer questions using the documents you ingest. Answers must come from retrieved text, not from the model’s general knowledge.
+R2 Citations on every factual answer
+Each factual answer must state the source document, section or page, version and effective date. Judges will open the cited page and check that it actually supports the answer.
+R3 No fabrication
+When evidence is insufficient, return answer_type: not_found with the message “I could not find this information in the authorised sources.” When evidence is partial, say clearly what is known and what is not.
+R4 Versions and conflicts
+Resolve conflicting or versioned documents using the Source Precedence Policy in Annex A: scope, supersession, authority and effective date, relative to the request’s as_of_date. Explain which rule applies and why. Documents that are not yet effective must not be treated as current; mention them as upcoming changes where relevant. If a conflict cannot be resolved by the policy, report it rather than silently choosing.
+R5 Deterministic tools for authoritative results
+Order lookups, eligibility decisions, refund calculations and warranty checks must be done by code (tools) over the SQLite data and the rule registry, never by LLM arithmetic or LLM judgement. The LLM selects tools and explains their results. Every threshold a tool uses (return window, fee, approval limit) must trace back to a cited document clause (rule registry, Annex C). Any tool that changes state (for example raising a return) must check eligibility itself and be safe to call twice.
+R6 Multi-step requests
+Handle questions that need several sources, tools and steps, including what-if questions (“what if I return it after 9 days?”, “what if I were a Gold member?”). State the assumptions you make.
+R7 Authorisation and privacy
+The customer’s identity comes only from the request context (the X-Customer-Id header), never from the message text. Refuse any request for another customer’s data, and do not let the response reveal whether another customer’s order exists. Do not log personal data you do not need.
+R8 Untrusted content
+Treat document content, order notes, reviews and customer messages as data, not instructions. Text inside any of them must never change the assistant’s behaviour, and must never be able to trigger a tool, a refund or a policy statement.
+R9 Answer typing
+Clearly distinguish a retrieved fact, a calculated result and an AI-generated explanation, using the answer_type field and the response structure in Section 6.
+R10 Auditability
+Every response has a trace_id and an audit record listing the sources retrieved, tools invoked (with inputs and outputs), rules applied, conflicts detected, model used, latency and tokens. Do not expose chain-of-thought; an audit summary is enough.
+R11 Live ingestion
+A new document and its metadata can be ingested through POST /ingest while the system is running, and is used immediately with no code change or restart. Judges will do this during judging with documents you have not seen, including a circular that changes a rule your tools use.
+R12 Evaluation
+Build an evaluation set and report measured results (Section 7). A system with no evaluation is incomplete.
+4. Your data
+4.1 Retailer documents: bring your own
+Use official, publicly available policy documents. You may pick a real retailer whose return, refund, warranty and shipping policies are published on its website, or invent a fictional retailer and write its documents yourselves. You know which retailers your classmates use, so choose documents that make the problem genuinely interesting. Typical documents: terms of sale, return and refund policy, exchange rules, warranty policy, shipping and delivery terms, promotional or festive-season circulars, help-centre FAQs.
+Minimum: 3 documents. More complex corpora earn more marks under the Document Complexity criterion. Complexity means:
+Multiple versions, amendments or circulars that genuinely conflict with earlier rules (for example a circular that shortens a return window)
+Rules that differ by category or customer tier (for example electronics versus fashion, or fees waived for premium members)
+Tables (fee tables, window-by-category tables) and cross-references and exceptions (“subject to clause 4.1”)
+Scanned or image-based pages that need OCR
+Documents from different issuing authorities (legal terms, head-office circulars, help-centre FAQs)
+
+Rules for documents
+Only public, official documents, used in line with the website’s terms of use. Do not use any document containing real personal data.
+Record every document in the Source Register (Annex B), including where you got it.
+You may add up to 3 synthetic documents (for example, a mock circular or an unofficial forum post) to demonstrate conflict handling and untrusted content. Mark them synthetic: Y in the register.
+4.2 Synthetic customer and order data: generate it with an LLM
+Real customer data must not be used. Generate your data with an LLM, in the fixed schema in Annex C. You may add columns or tables, but you may not rename or remove the required ones, because judges will load their own test customers in this exact schema.
+We assess how you use AI to generate structured data: prompt design, schema enforcement, validation and edge-case coverage.
+Minimum requirements
+At least 30 customers across at least 2 tiers, at least 20 products across at least 5 categories, and at least 60 orders
+Edge cases included deliberately: an item delivered exactly on the last day of its return window; an item delivered one day after the window closed; an order whose refund is above the human-approval limit; an item in a non-returnable category; an order that has not been delivered yet; an item that already has a return; a customer with two orders of the same product (so a question can be ambiguous); a warranty that has just expired and one that is still valid; a coupon-discounted item (refund is on the net price); a delivery note containing instruction-like text
+A validation script that enforces the schema and logical constraints (delivered_on only when the order is DELIVERED and never before order_date; net price not above list price; quantity at least 1; every return refers to an existing item; no reserved identifiers) and reports violations
+A loader that adds customers and orders from CSV files in the Annex C schema, for example python scripts/load_data.py --dir test_customers/, or an equivalent admin endpoint. Judges will use it
+Submit with your data
+The exact prompts you used (verbatim) and the model that produced the data
+The generator script and the validation script with its output
+A one-page data card (Annex E)
+5. Technology stack (mandatory)
+Layer
+Required choice
+Notes
+User interface
+Streamlit (recommended) or React
+Keep it minimal. The UI is scored only for usability
+API
+FastAPI + Uvicorn, Pydantic v2
+Must implement the contract in Section 6
+Orchestration
+LangGraph (Python)
+How you split work into agents, tools or fixed steps is your decision
+Vector store
+ChromaDB, persisted to disk
+Do not re-ingest on every restart
+Structured data
+SQLite
+Customer and order data and the rule registry
+Embeddings
+sentence-transformers (all-MiniLM-L6-v2 or BAAI/bge-small-en-v1.5)
+Be ready to justify your choice
+LLM
+Ollama, running locally (for example llama3.1:8b or qwen2.5:7b-instruct)
+A cloud LLM may be used only as a fallback behind a configuration switch, disclosed in the README
+Packaging
+Docker + docker compose
+Ollama may run on the host machine; document how to connect
+Version control
+Git
+Commit throughout the day. All members should commit
+
+About the architecture
+A typical layering is: UI → FastAPI → LangGraph → retrieval, tools and rules → ChromaDB and SQLite. You may have seen diagrams splitting this into a RAG agent, a tool agent and a rule agent. That split is illustrative only. Decide what your system actually needs, and be prepared to explain it.
+5.1 Practical tips
+Pull your Ollama model before the event and test structured (JSON) output with it. Local 7–8B models can be unreliable at tool calling and JSON; validate their output and retry or fall back.
+Add a MOCK_LLM=true mode so you can test the rest of the pipeline without the model.
+Get one end-to-end path working early (one document, one question, one cited answer), then add capability.
+Keyword and embedding search both miss paraphrases (“send back” versus “return”). Test with differently worded questions, not only the ones you wrote the documents for.
+Commit every hour. It keeps you honest about progress.
+6. API contract (mandatory)
+This contract is fixed so judges can run the same live tests against every team.
+Endpoint
+Purpose
+Notes
+POST /ask
+Ask a question
+Header X-Customer-Id identifies the logged-in customer (optional for general questions). Body: question, optional as_of_date (YYYY-MM-DD, defaults to today)
+POST /ingest
+Add a document while running
+Multipart: the file plus a metadata JSON with the Source Register fields (Annex B), and optionally the rules the document introduces or changes. Returns doc_id, chunks_indexed, status
+GET /health
+Readiness
+Status of API, vector store, SQLite and LLM
+GET /audit/{trace_id}
+Audit record
+Full audit record for one response. Visible to the customer who asked, or to an admin
+GET /sources
+Source Register
+All ingested documents and their metadata
+Test-data loader
+Load judge test data
+CLI script or admin endpoint that loads CSVs in the Annex C schema
+6.1 Response format for POST /ask
+{
+  "trace_id": "7f3c2a9e",
+  "answer": "Yes, you can return the headphones. Your refund would be 2639.10.",
+  "answer_type": "calculated",
+  "citations": [
+    {"doc_id": "CIRC-2026-07", "title": "Electronics Return Window", "section": "1",
+     "page": 1, "version": "1.0", "effective_from": "2026-08-01"}
+  ],
+  "tools_invoked": [
+    {"tool": "check_return_eligibility", "input": {"order_id": "O-100001", "sku": "SKU-E001"},
+     "output": {"result": "ELIGIBLE", "days_since_delivery": 3, "window_days": 7}},
+    {"tool": "calculate_refund", "output": {"gross_amount": 2999.00, "restocking_fee": 299.90,
+     "reverse_shipping_fee": 60.00, "refund_amount": 2639.10}}
+  ],
+  "applied_rules": [{"rule_id": "RET-WIN-ELEC-02", "value": 7, "source_doc_id": "CIRC-2026-07"}],
+  "conflicts_detected": [{"parameter": "return_window_days", "winner": "RET-WIN-ELEC-02",
+     "resolution": ["superseded by circular (step 2)"]}],
+  "assumptions": ["Reason not stated: assuming change of mind."],
+  "explanation": "Delivered 3 days ago; the electronics window is 7 days. Refund = 2999.00 - 10% - 60.00.",
+  "as_of_date": "2026-10-06"
+}
+6.2 Answer types
+answer_type
+Use when
+retrieved_fact
+The answer comes directly from cited document text
+calculated
+The answer is the result of a deterministic tool (lookup, eligibility, refund, warranty), explained by the LLM
+not_found
+The authorised sources do not contain the answer
+clarification_needed
+The question is ambiguous (for example, which order, or which product category?) and the system asks back
+refused
+The request is not allowed (another customer’s data; no identity for a personal question)
+conflict_flagged
+Sources conflict and the precedence policy cannot resolve it; both are cited
+7. Evaluation (mandatory)
+A demo shows that your system can work. An evaluation shows how well it works. Build an evaluation set from your own documents and synthetic data, with at least 20 questions, each with an expected answer and expected source:
+At least 3 questions that cannot be answered from your sources
+At least 3 questions involving versions or conflicting documents
+At least 4 personal questions answered through tools, including a last-day-of-window case and a fee calculation
+At least 2 attempts to access another customer’s data
+At least 2 multi-step or what-if questions
+At least 1 attempt to inject instructions through a document or an order note
+Report these results
+Metric
+What it measures
+Answer correctness
+Matches the expected answer (exact for numbers and dates)
+Citation accuracy
+The cited section actually supports the answer
+Abstention accuracy
+Unanswerable questions correctly return not_found, and answerable ones do not
+Tool-result correctness
+Eligibility and calculation results match the expected values
+Retrieval hit rate
+The expected source appears in the top-k retrieved chunks
+Latency and cost
+p50 and p95 latency; LLM calls and tokens per question
+
+State your method: exact match, a human-graded rubric, or LLM-as-judge (if you use a judge model, include its prompt and how you checked it). For higher marks: compare at least two configurations (for example, chunking strategy, embedding model, top-k or prompt) and justify your final choice with the numbers. Include some questions worded differently from your documents; a set that only repeats the documents’ own words overstates quality.
+8. Deliverables checklist
+Git repository, tagged final, with a README: architecture diagram, setup and run steps, sample curl commands, assumptions, limitations and known edge cases
+docker compose up starts the API, UI and stores (Ollama may run on the host)
+Source Register (CSV, Annex B) and the documents themselves (or download links)
+Rule registry in SQLite, every rule linked to a cited clause
+Synthetic data kit: prompts, generator script, validation script and output, data card
+Evaluation set and report (Section 7)
+Three sample audit records for different answer types
+AI-usage disclosure: which parts were generated with AI coding assistants and how you verified them
+Team contribution statement: who built which part
+Signed declaration of original work by every member
+9. How you will be judged
+9.1 Your 30-minute slot
+Time
+What happens
+How to prepare
+0–10 min
+Your demo
+Show at least: one cited policy answer, one tool-based eligibility and refund answer, one not_found, and one conflict being resolved
+10–20 min
+Live testing by judges
+Judges will ingest new documents (including a circular that changes a rule) through POST /ingest, load test customers with your loader, and ask questions you have not seen. Make sure your system is running and these paths work
+20–30 min
+Q&A
+Questions are directed at individual members, including about parts they did not build. You may be asked to make a small live change
+9.2 Scoring (100 points)
+Criterion
+Points
+What we look for
+Grounded answers and citations
+20
+Correct answers; every citation supports its claim; honest handling of partial evidence
+Versioning, conflicts and live ingestion
+15
+Precedence policy applied correctly to your documents and to judges’ documents ingested live
+Tools, multi-step and orchestration
+15
+Deterministic tools for authoritative results; correct tool selection; multi-step and what-if handling
+Safety and responsible AI
+10
+Abstention, authorisation, resistance to instructions hidden in documents or order notes
+Evaluation rigour
+10
+A real evaluation set, measured results, disclosed method, comparison of approaches
+Data and document engineering
+10
+Document complexity and coverage (5); synthetic data quality and AI-assisted generation discipline (5)
+Engineering quality
+10
+API contract, Docker, code structure, Git history across members, audit and observability
+Architecture judgement and articulation
+10
+The simplest design that meets the requirements; clear trade-offs; every member can explain it
+9.3 Capability levels
+You are not expected to reach the top level. These levels describe how a system can mature; judges score how well your choices are justified and how well they work, not how many levels you claim.
+Level
+Capability
+1. Basic RAG
+Retrieve documents and answer questions
+2. Grounded RAG
+Citations, no fabrication, “I could not find this”
+3. Context-aware RAG
+Metadata, versions, effective dates, conflict resolution
+4. Tool-using AI
+Order records, eligibility and refund tools, deterministic results
+5. Agent
+Planning, tool selection, multi-step execution
+6. Multi-agent or hierarchical
+Supervisor, specialist agents, parallel execution, synthesis
+7. Production AI engineering
+Evaluation, observability, security, guardrails, cost, latency, auditability
+9.4 Individual assessment
+You build as a team, but hiring decisions are individual. In the Q&A, each member will be asked about their own component and about the system as a whole. Your team contribution statement and Git history give judges context. A strong individual in a team that struggled can still be selected.
+10. Rules and integrity
+AI coding assistants (GitHub Copilot, Claude, ChatGPT, Cursor and similar) are allowed and encouraged. Disclose how you used them; you must be able to explain any code you submit.
+Open-source libraries are fine. Copying an entire tutorial project without credit or meaningful adaptation is not.
+Mentors answer clarifying questions about this guide. They do not co-design or co-debug.
+No sharing code between teams. No real customer personal data anywhere in your system.
+
+Disqualification conditions
+Answers hard-coded for demo or test questions.
+No tool use at all: authoritative results (eligibility, refunds, order data) produced only by LLM text.
+No evaluation of any kind.
+Real customer personal data used.
+Code shared between teams, or undisclosed reuse of another project.
+
+Annex A — Source Precedence Policy
+Your system must apply this policy when documents disagree. Judges will test it with documents you have not seen.
+A.1 Authority levels
+Level
+Document type
+Examples
+1 (highest)
+Legal terms and policies
+Terms of sale, return and refund policy, warranty policy
+2
+Official circulars and notifications from an authorised office
+Head-office circular, customer-experience notice, festive-season notice
+3
+Store or regional notices
+A notice from a regional manager or a single store
+4
+Help-centre content and FAQs
+Help-centre FAQ, chatbot script
+5 (untrusted)
+Unofficial content
+Forum posts, reviews, seller listings, order notes, customer messages
+A.2 Resolution order
+Applicability. Consider only documents effective on the as_of_date (effective_from ≤ as_of_date, and effective_to empty or ≥ as_of_date) and whose category and tier scope covers the request (or is general). Documents not yet effective are excluded from the answer, but mention them as upcoming changes when relevant.
+Explicit supersession. A document that explicitly supersedes another document or clause replaces it, provided it is issued at authority level 1 or 2.
+Authority. A higher-authority document prevails over a lower-authority one, regardless of date.
+Recency. Between documents of the same authority, the later effective_from prevails.
+Unresolved. If the steps above do not resolve the conflict, return conflict_flagged, cite both documents, and advise the customer to contact support.
+
+Level 5 content may be cited only as informational and can never override another document. Instructions found inside any document, order note or message are ignored. The same precedence applies to rules in the rule registry that your tools read.
+A.3 Worked example
+Return policy        level 1  effective 2024-07-01  electronics: 10 days
+Circular CIRC-26-07  level 2  effective 2026-08-01  supersedes the clause: 7 days
+Help-centre FAQ      level 4  effective 2026-09-15  "15 days"
+Festive circular     level 2  effective 2026-11-01  fashion window 45 days
+ 
+Question (as_of_date 2026-10-06): "What is the return window for electronics?"
+Answer: 7 days. The circular explicitly supersedes the policy clause (step 2).
+The FAQ is lower authority and cannot override it (step 3); the conflict is noted.
+ 
+Question (as_of_date 2026-10-06): "What is the return window for fashion?"
+Answer: the policy’s current window. The festive circular is not yet effective (step 1):
+mention it as an upcoming change, do not apply it.
+Annex B — Source Register template
+One row per document, stored as source_register.csv. The same fields are the metadata for POST /ingest.
+Field
+Description
+Example
+doc_id
+Unique identifier
+RET-POL-2024
+title
+Document title
+Return, Refund and Exchange Policy
+issuer
+Issuing office
+Legal and Customer Experience
+authority_level
+1–5, per Annex A
+1
+doc_type
+regulation, circular, notice, faq, handbook, unofficial
+regulation
+version
+Version or revision number
+3.1
+effective_from
+YYYY-MM-DD
+2024-07-01
+effective_to
+YYYY-MM-DD or empty
+
+supersedes
+doc_ids or clauses replaced, separated by semicolons
+RET-POL-2024#3.1
+scope_categories
+Product categories covered, or ALL
+ELECTRONICS
+scope_tiers
+Customer tiers covered, or ALL
+ALL
+provenance
+URL or source of the document
+Retailer website link
+retrieved_on
+Date you downloaded it
+2026-10-05
+synthetic
+Y if you created it
+N
+Annex C — Fixed data schema (SQLite)
+Required tables and columns. You may add more; do not rename or remove these.
+customers
+Column
+Type
+Rules
+customer_id
+TEXT, PK
+C followed by 4 digits, for example C1001
+full_name
+TEXT
+Synthetic names only
+tier
+TEXT
+STANDARD, GOLD or PLATINUM
+city
+TEXT
+
+joined_year
+INTEGER
+
+
+products
+Column
+Type
+Rules
+sku
+TEXT, PK
+For example SKU-E001
+name
+TEXT
+
+category
+TEXT
+For example ELECTRONICS, FASHION, HOME, BEAUTY, GROCERY
+price
+REAL
+List price in rupees, > 0
+warranty_months
+INTEGER
+≥ 0; 0 means no warranty
+
+orders
+Column
+Type
+Rules
+order_id
+TEXT, PK
+O- followed by 6 digits, for example O-100001
+customer_id
+TEXT, FK
+
+order_date
+TEXT
+YYYY-MM-DD
+status
+TEXT
+PLACED, SHIPPED, DELIVERED or CANCELLED
+payment_method
+TEXT
+UPI, CARD or COD
+delivery_note
+TEXT
+Free text from customer or courier. Untrusted (R8)
+
+order_items
+Column
+Type
+Rules
+order_id
+TEXT, FK
+Primary key with sku
+sku
+TEXT, FK
+
+qty
+INTEGER
+≥ 1
+net_unit_price
+REAL
+Price actually paid per unit after discounts; > 0 and ≤ list price
+delivered_on
+TEXT
+YYYY-MM-DD; set only when the order is DELIVERED, never before order_date. Totals and refunds are computed by tools, never stored
+
+returns
+Column
+Type
+Rules
+return_id
+TEXT, PK
+For example R-000001
+order_id
+TEXT, FK
+
+sku
+TEXT, FK
+
+requested_on
+TEXT
+YYYY-MM-DD
+reason
+TEXT
+DEFECTIVE, DAMAGED, WRONG_ITEM or CHANGED_MIND
+status
+TEXT
+REQUESTED, PICKED_UP, REFUNDED or REJECTED
+refund_amount
+REAL
+
+
+rule_registry
+Column
+Type
+Rules
+rule_id
+TEXT, PK
+For example RET-WIN-ELEC-01
+description
+TEXT
+Plain-language description
+parameter
+TEXT
+For example return_window_days, restocking_fee_pct, auto_refund_limit
+operator
+TEXT
+<=, =, between and so on
+value
+TEXT
+Threshold value(s)
+scope_categories
+TEXT
+ALL or a semicolon list
+scope_tiers
+TEXT
+ALL or a semicolon list
+effective_from
+TEXT
+YYYY-MM-DD
+effective_to
+TEXT
+YYYY-MM-DD or empty
+source_doc_id
+TEXT
+Must exist in the Source Register
+source_section
+TEXT
+Clause, section or page
+
+Your tools must read thresholds from rule_registry, not from constants in code. Be ready to explain how a rule gets into the registry and what happens when a new circular changes one.
+Reserved for judges: customer IDs C9000 to C9999, SKUs starting with SKU-JDG, and order IDs from O-900000. Do not use them in your own data.
+Annex D — Example audit record
+{
+  "trace_id": "7f3c2a9e",
+  "timestamp": "2026-10-06T14:02:11Z",
+  "customer_id": "C1001",
+  "question_category": "RETURN",
+  "question_redacted": "Can I return my headphones from O-100001?",
+  "sources_retrieved": [
+    {"doc_id": "RET-POL-2024", "section": "3.1", "score": 8.9},
+    {"doc_id": "CIRC-2026-07", "section": "1", "score": 8.5}],
+  "precedence_decisions": [
+    "CIRC-2026-07#1 supersedes RET-POL-2024#3.1 (step 2)"],
+  "tools_invoked": [
+    {"tool": "check_return_eligibility", "status": "ok", "ms": 4},
+    {"tool": "calculate_refund", "status": "ok", "ms": 2}],
+  "answer_type": "calculated",
+  "model": "llama3.1:8b", "llm_calls": 2, "tokens": 1480, "latency_ms": 4100
+}
+Annex E — Synthetic data card template
+Field
+What to write
+Purpose
+What the data is for and what it must exercise
+Generation method
+Model used, prompts (verbatim), how many generation rounds, what you edited by hand
+Schema and validation
+Which constraints your validation script enforces and its output
+Edge cases covered
+Each deliberate edge case, and the order or customer id that demonstrates it
+Distribution
+Customers per tier, orders per status, items per category
+Known gaps and biases
+What the data does not cover; any imbalance you noticed
+Privacy statement
+Confirmation that no real person’s data was used

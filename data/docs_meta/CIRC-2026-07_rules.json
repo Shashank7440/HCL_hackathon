@@ -1,0 +1,16 @@
+[
+  {
+    "rule_id": "RET-WIN-ELEC-02",
+    "description": "Revised electronics return window (days)",
+    "parameter": "return_window_days",
+    "operator": "=",
+    "value": "7",
+    "scope_categories": "ELECTRONICS",
+    "scope_tiers": "ALL",
+    "effective_from": "2026-08-01",
+    "effective_to": "",
+    "source_doc_id": "CIRC-2026-07",
+    "source_section": "1",
+    "auto_extracted": 0
+  }
+]

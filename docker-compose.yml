@@ -1,0 +1,23 @@
+services:
+  api:
+    build: .
+    ports: ["8000:8000"]
+    environment:
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b-instruct}
+      - MOCK_LLM=${MOCK_LLM:-false}
+      - DB_PATH=data/app.db
+      - CHROMA_PATH=data/chroma
+    volumes:
+      - store:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+  ui:
+    build: .
+    command: streamlit run ui/streamlit_app.py --server.port=8501 --server.address=0.0.0.0
+    ports: ["8501:8501"]
+    environment:
+      - API_BASE=http://api:8000
+    depends_on: [api]
+volumes:
+  store:

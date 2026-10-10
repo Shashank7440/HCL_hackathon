@@ -1,0 +1,64 @@
+[schema]
+  OK  customers.csv header == Annex C (5 cols)
+  OK  products.csv header == Annex C (5 cols)
+  OK  orders.csv header == Annex C (6 cols)
+  OK  order_items.csv header == Annex C (5 cols)
+  OK  returns.csv header == Annex C (7 cols)
+[id formats & reserved ranges]
+  OK  all customer_id match C#### 
+  OK  all order_id match O-######
+  OK  all return_id match R-######
+  OK  no reserved judge identifiers (C9000-C9999, SKU-JDG*, O-900000+)
+[enums]
+  OK  tier enum
+  OK  order status enum
+  OK  payment_method enum
+  OK  return reason enum
+  OK  return status enum
+[foreign keys & referential integrity]
+  OK  orders.customer_id -> customers
+  OK  order_items -> orders/products
+  OK  returns -> orders/products
+  OK  every return refers to an existing order_item
+[logical constraints]
+  OK  delivered_on only when DELIVERED and >= order_date (0 bad)
+  OK  net_unit_price <= list price (0 bad)
+  OK  qty >= 1 (0 bad)
+  OK  price > 0
+  OK  warranty_months >= 0
+[distribution minimums]
+  OK  customers >= 30 (32)
+  OK  tiers >= 2 (['GOLD', 'STANDARD'])
+  OK  products >= 20 (27)
+  OK  categories >= 5 (['BEAUTY', 'ELECTRONICS', 'FASHION', 'GROCERY', 'HOME'])
+  OK  orders >= 60 (66)
+[rule registry & source register]
+  OK  13 rules seeded (13)
+  OK  every rule's source_doc_id exists in register
+  OK  every rule cites a source_section
+  OK  circular rule RET-WIN-ELEC-02 (7 days) present
+  OK  stale FAQ rule FAQ-ELEC-01 (15 days) present - must lose by authority
+  OK  CIRC-2026-07 supersedes RET-POL-2024#3.1
+  OK  CIRC-FEST-2026 not yet effective at as_of 2026-10-06
+  OK  authority levels within 1-5
+[edge cases with frozen expected values]
+  OK  O-100001 happy path: 3 days, refund 2639.10 (expect 2639.10)
+  OK  O-100002 last day: 7/7 (expect 7)
+  OK  O-100003 out of window: 8/7 (expect 8)
+  OK  O-100004 above approval limit: refund 80931.00 > 50000 (expect 80931.00)
+  OK  O-100005 non-returnable category (GROCERY)
+  OK  O-100006 not delivered yet
+  OK  O-100007 already has a REQUESTED return
+  OK  O-100008 order-status lookup (SHIPPED)
+  OK  O-100009/O-100010 same customer, same product -> clarification needed
+  OK  O-100011 warranty EXPIRED before as_of (2026-10-05 < 2026-10-06)
+  OK  O-100012 warranty VALID to 2026-10-07
+  OK  O-100013 coupon: net 3999 <= list 4999, refund 3539.10 (expect 3539.10)
+  OK  O-100014 delivery_note contains instruction-like text
+  OK  O-100015 customer is GOLD (fee waiver)
+  OK  O-100015 GOLD waiver refund 2939.00 (expect 2939.00)
+  OK  O-100016 fashion, 16 days <= 30 (got 16)
+
+============================================================
+checks: 52   violations: 0
+ALL CHECKS PASSED
