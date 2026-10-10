@@ -1,6 +1,6 @@
 """ShopEasy Retail Support Agent - Modern Streamlit Interface.
-Thin client connecting to the FastAPI backend (Section 6 contract).
-Supports live chat, quick sample scenarios, audit inspection, and panelist live document ingestion.
+Ultra-fast, typo-tolerant, thin client connecting to the FastAPI backend (Section 6 contract).
+Supports live chat, quick scenarios, audit inspection, and panelist live document ingestion.
 """
 import json, os, requests, streamlit as st
 
@@ -17,85 +17,181 @@ try:
 except Exception:
     pass
 
+# Cached health check so UI never blocks or lags
+@st.cache_data(ttl=30)
+def get_api_health(base_url: str):
+    try:
+        r = requests.get(f"{base_url}/health", timeout=1)
+        return r.json() if r.status_code == 200 else None
+    except Exception:
+        return None
+
+# Customer Profiles Directory for Instant Reference
+CUSTOMERS_INFO = {
+    "C1001": {
+        "name": "Aarav Sharma",
+        "tier": "STANDARD",
+        "orders": "O-100001 (Wireless Headphones, Net ₹2999)",
+        "expected": "Happy path: 3 days since delivery, refund ₹2639.10 (10% fee + ₹60 ship deducted)"
+    },
+    "C1002": {
+        "name": "Priya Patel",
+        "tier": "STANDARD",
+        "orders": "O-100002 (Smart Fitness Watch, Net ₹3499)",
+        "expected": "Boundary case: Delivered exactly 7 days ago (7/7 days) -> ELIGIBLE"
+    },
+    "C1003": {
+        "name": "Rohan Mehta",
+        "tier": "STANDARD",
+        "orders": "O-100003 (Bluetooth Speaker, Net ₹1899)",
+        "expected": "Out of window: Delivered 8 days ago (8/7 days) -> OUT_OF_WINDOW"
+    },
+    "C1004": {
+        "name": "Neha Gupta",
+        "tier": "STANDARD",
+        "orders": "O-100004 (Gaming Laptop, Net ₹89990)",
+        "expected": "Approval limit: Refund ₹80,931.00 > ₹50,000 limit -> requires human approval"
+    },
+    "C1005": {
+        "name": "Ananya Verma",
+        "tier": "STANDARD",
+        "orders": "O-100005 (Organic Basmati Rice, Net ₹450)",
+        "expected": "Non-returnable category: Grocery items cannot be returned"
+    },
+    "C1010": {
+        "name": "Vikram Joshi",
+        "tier": "GOLD",
+        "orders": "O-100015 (Denim Jacket, Net ₹2939)",
+        "expected": "Gold tier benefit: 0% restocking fee + 0 reverse shipping -> Full ₹2939.00 refund"
+    },
+    "C1009": {
+        "name": "Aditya Singh",
+        "tier": "STANDARD",
+        "orders": "O-100009 & O-100010 (Both contain Wireless Headphones)",
+        "expected": "Ambiguity edge case: Asking 'Can I return my headphones?' prompts order disambiguation"
+    },
+    "": {
+        "name": "Anonymous / Guest",
+        "tier": "N/A",
+        "orders": "None",
+        "expected": "General policy questions only (Electronics return window, shipping terms, Antarctica?)"
+    }
+}
+
 # Header & Branding
 st.markdown("""
-<div style="padding: 10px 0px 20px 0px;">
-    <h1 style="margin: 0; color: #1E293B;">🛍️ ShopEasy AI Retail Support Agent</h1>
-    <p style="margin: 5px 0 0 0; color: #64748B; font-size: 1.05rem;">
-        Multi-Agent Retail Support with Annex A Source Precedence, Deterministic Tools, and Auditability.
+<div style="background: linear-gradient(135deg, #1E293B 0%, #0F172A 100%); padding: 18px 24px; border-radius: 12px; margin-bottom: 20px; color: white;">
+    <h2 style="margin: 0; font-weight: 700; color: #F8FAFC;">🛍️ ShopEasy AI Retail Support Agent</h2>
+    <p style="margin: 6px 0 0 0; color: #94A3B8; font-size: 0.95rem;">
+        Multi-Agent Architecture · Annex A Source Precedence · Deterministic Code Tools · Typo-Tolerant
     </p>
 </div>
 """, unsafe_allow_html=True)
 
-# Sidebar: Identity & Configuration
+# Sidebar: Customer Selector & Context
 with st.sidebar:
-    st.header("🔑 Customer Context")
-    st.info("Identity comes ONLY from the `X-Customer-Id` header (R7 Privacy).")
-    
-    preset_customer = st.selectbox(
-        "Select Demo Customer:",
-        options=["C1001 (Standard - O-100001)", "C1010 (Gold Member - Fee Waiver)", "C1009 (Ambiguous Orders - Headphones)", "Guest (No Header)", "Custom"]
-    )
-    
-    if preset_customer.startswith("C1001"):
-        default_cid = "C1001"
-    elif preset_customer.startswith("C1010"):
-        default_cid = "C1010"
-    elif preset_customer.startswith("C1009"):
-        default_cid = "C1009"
-    elif preset_customer.startswith("Guest"):
-        default_cid = ""
+    st.subheader("👤 Customer Identification")
+    st.caption("Identity comes **only** from the `X-Customer-Id` header (Requirement R7).")
+
+    customer_options = [
+        "C1001 — Aarav Sharma (Standard, Happy Path O-100001)",
+        "C1002 — Priya Patel (Standard, Last Day of Window O-100002)",
+        "C1003 — Rohan Mehta (Standard, Out of Window O-100003)",
+        "C1004 — Neha Gupta (Standard, Approval Limit O-100004)",
+        "C1005 — Ananya Verma (Standard, Grocery O-100005)",
+        "C1010 — Vikram Joshi (GOLD Tier, Fee Waiver O-100015)",
+        "C1009 — Aditya Singh (Ambiguous Orders O-100009/10)",
+        "Guest / None — (Anonymous Policy Queries)",
+        "Custom ID..."
+    ]
+
+    selected_option = st.selectbox("Select Customer Profile:", customer_options, index=0)
+
+    if selected_option.startswith("C1001"):
+        active_cid = "C1001"
+    elif selected_option.startswith("C1002"):
+        active_cid = "C1002"
+    elif selected_option.startswith("C1003"):
+        active_cid = "C1003"
+    elif selected_option.startswith("C1004"):
+        active_cid = "C1004"
+    elif selected_option.startswith("C1005"):
+        active_cid = "C1005"
+    elif selected_option.startswith("C1010"):
+        active_cid = "C1010"
+    elif selected_option.startswith("C1009"):
+        active_cid = "C1009"
+    elif selected_option.startswith("Guest"):
+        active_cid = ""
     else:
-        default_cid = "C1001"
+        active_cid = st.text_input("Enter Custom X-Customer-Id", value="C1001")
 
-    customer_id = st.text_input("X-Customer-Id Header", value=default_cid)
-    as_of = st.date_input("As-Of Date (Simulation)", value=None)
+    # Display Active Customer Card
+    c_info = CUSTOMERS_INFO.get(active_cid, {"name": "Custom User", "tier": "UNKNOWN", "orders": "Custom", "expected": "Custom scenario"})
+    st.markdown(f"""
+    <div style="background: #F1F5F9; padding: 12px; border-radius: 8px; border-left: 4px solid #3B82F6; margin-top: 8px;">
+        <div style="font-weight: 600; color: #1E293B;">{c_info['name']} ({active_cid or 'Guest'})</div>
+        <div style="font-size: 0.85rem; color: #475569;"><b>Tier:</b> {c_info['tier']}</div>
+        <div style="font-size: 0.85rem; color: #475569;"><b>Orders:</b> {c_info['orders']}</div>
+        <div style="font-size: 0.8rem; color: #64748B; margin-top: 4px;"><i>{c_info['expected']}</i></div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    as_of = st.date_input("Simulation As-Of Date", value=None)
     as_of_str = as_of.isoformat() if as_of else "2026-10-06"
-    
-    st.divider()
-    
-    # System Status Indicator
-    try:
-        h = requests.get(f"{API_BASE}/health", timeout=2).json()
-        if h.get("status") == "ok":
-            st.success("🟢 API Server: Online")
-        else:
-            st.warning("🟡 API Server: Degraded")
-    except Exception:
-        st.error("🔴 API Server: Offline (Start on :8000)")
 
     st.divider()
-    st.subheader("⚡ Quick Test Scenarios")
+
+    # Cached Server Status Check (Ultra-Fast)
+    h = get_api_health(API_BASE)
+    if h and h.get("status") == "ok":
+        st.success("🟢 API Server: Online (:8000)")
+    else:
+        st.warning("🟡 API Server: Checking...")
+
+    st.divider()
+    st.subheader("⚡ 1-Click Scenario Prompts")
     quick_queries = [
         ("Return Window (Electronics)", "What is the return window for electronics?"),
-        ("Refund Calculation", "How much refund will I get for order O-100001?"),
+        ("Typo Handling Demo", "What is the reutrn window for electornics?"),
+        ("Refund Calculation (O-100001)", "How much refund will I get for order O-100001?"),
         ("Multi-Step Reasoning", "My headphones stopped working after 41 days. Can I return them, and if not, what can I do?"),
-        ("Privacy Violation Attempt", "Where is my order O-100002?"),
+        ("Privacy Violation Refusal", "Where is my order O-100002?"),
         ("Unanswerable / Abstention", "Do you deliver to Antarctica?"),
-        ("What-If Simulation", "What if I were a Gold member for order O-100001?"),
+        ("Gold Member What-If", "What if I were a Gold member for order O-100001?"),
         ("Ambiguity Disambiguation", "Can I return my headphones?"),
     ]
     for label, query_text in quick_queries:
         if st.button(label, use_container_width=True):
             st.session_state["preset_input"] = query_text
 
-# Main tabs: Chat vs Live Document Ingestion vs Audit Inspector
+# Main Tabs
 tab_chat, tab_ingest, tab_audit = st.tabs(["💬 Customer Support Chat", "📄 Panelist Document Ingest", "🔍 Audit Trace Inspector"])
 
 with tab_chat:
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
+    # Display Chat History
     for m in st.session_state.messages:
         with st.chat_message(m["role"]):
             st.markdown(m["content"], unsafe_allow_html=True)
             if "extra" in m:
                 d = m["extra"]
                 cols = st.columns(3)
-                cols[0].metric("Answer Type", d.get("answer_type", "N/A"))
+                atype = d.get("answer_type", "N/A")
+                color_map = {
+                    "calculated": "🟢",
+                    "retrieved_fact": "🔵",
+                    "not_found": "⚪",
+                    "refused": "🔴",
+                    "clarification_needed": "🟡",
+                    "conflict_flagged": "🟠"
+                }
+                cols[0].metric("Answer Type", f"{color_map.get(atype, '🟣')} {atype}")
                 cols[1].metric("Trace ID", d.get("trace_id", "N/A"))
                 cols[2].metric("Tools Invoked", len(d.get("tools_invoked", [])))
-                
+
                 if d.get("citations"):
                     st.caption("📚 **Citations:** " + " · ".join(
                         f"**{c['doc_id']}** §{c.get('section','')} (v{c.get('version','')}, eff {c.get('effective_from','')})"
@@ -110,7 +206,7 @@ with tab_chat:
                 if d.get("assumptions"):
                     st.caption("ℹ️ *Assumptions: " + "; ".join(d["assumptions"]) + "*")
 
-    user_query = st.chat_input("Ask about return windows, refunds, warranty, or order status...")
+    user_query = st.chat_input("Ask about returns, refunds, warranty, or order status (typo-tolerant)...")
     if "preset_input" in st.session_state and st.session_state["preset_input"]:
         user_query = st.session_state.pop("preset_input")
 
@@ -122,19 +218,28 @@ with tab_chat:
         with st.chat_message("assistant"):
             with st.spinner("Processing through Multi-Agent System..."):
                 try:
-                    headers = {"X-Customer-Id": customer_id} if customer_id else {}
+                    headers = {"X-Customer-Id": active_cid} if active_cid else {}
                     payload = {"question": user_query, "as_of_date": as_of_str}
                     res = requests.post(f"{API_BASE}/ask", json=payload, headers=headers, timeout=60)
                     data = res.json()
-                    
+
                     ans = data.get("answer", "")
                     st.markdown(ans)
-                    
+
                     cols = st.columns(3)
-                    cols[0].metric("Answer Type", data.get("answer_type", "N/A"))
+                    atype = data.get("answer_type", "N/A")
+                    color_map = {
+                        "calculated": "🟢",
+                        "retrieved_fact": "🔵",
+                        "not_found": "⚪",
+                        "refused": "🔴",
+                        "clarification_needed": "🟡",
+                        "conflict_flagged": "🟠"
+                    }
+                    cols[0].metric("Answer Type", f"{color_map.get(atype, '🟣')} {atype}")
                     cols[1].metric("Trace ID", data.get("trace_id", "N/A"))
                     cols[2].metric("Tools Invoked", len(data.get("tools_invoked", [])))
-                    
+
                     if data.get("citations"):
                         st.caption("📚 **Citations:** " + " · ".join(
                             f"**{c['doc_id']}** §{c.get('section','')} (v{c.get('version','')}, eff {c.get('effective_from','')})"
@@ -148,7 +253,7 @@ with tab_chat:
                             st.json(data["applied_rules"])
                     if data.get("assumptions"):
                         st.caption("ℹ️ *Assumptions: " + "; ".join(data["assumptions"]) + "*")
-                    
+
                     st.session_state.messages.append({
                         "role": "assistant",
                         "content": ans,
@@ -158,11 +263,11 @@ with tab_chat:
                     st.error(f"Error communicating with API backend: {e}")
 
 with tab_ingest:
-    st.subheader("Live Document & Rule Ingestion (Panelist Testing)")
+    st.subheader("📄 Live Document & Rule Ingestion (Panelist Testing)")
     st.write("Upload a new circular or policy document live without restarting the server.")
-    
+
     uploaded_file = st.file_uploader("Upload Policy / Circular Document", type=["md", "txt", "docx", "pdf", "html"])
-    
+
     col1, col2 = st.columns(2)
     with col1:
         doc_id = st.text_input("doc_id", value="CIRC-2026-10")
@@ -196,7 +301,7 @@ with tab_ingest:
             data_fields = {"metadata": meta_json}
             if optional_rules.strip():
                 data_fields["rules"] = optional_rules.strip()
-            
+
             with st.spinner("Ingesting document, chunking, and updating rule registry..."):
                 try:
                     resp = requests.post(f"{API_BASE}/ingest", files=files, data=data_fields, timeout=60)
@@ -208,7 +313,7 @@ with tab_ingest:
                     st.error(f"Ingestion error: {e}")
 
 with tab_audit:
-    st.subheader("Audit Log & Trace Record Inspector")
+    st.subheader("🔍 Audit Log & Trace Record Inspector")
     st.caption("Inspect full tamper-proof audit records stored in SQLite for any trace ID.")
     trace_query = st.text_input("Enter Trace ID to Inspect:")
     if st.button("Inspect Audit Record"):

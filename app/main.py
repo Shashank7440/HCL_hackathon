@@ -44,6 +44,27 @@ def root():
         }
     }
 
+_last_llm_check = 0.0
+_last_llm_ok = False
+
+def check_llm_live() -> bool:
+    global _last_llm_check, _last_llm_ok
+    import time
+    now = time.time()
+    if now - _last_llm_check < 60:
+        return _last_llm_ok
+    _last_llm_check = now
+    if settings.MOCK_LLM:
+        _last_llm_ok = True
+        return True
+    import urllib.request
+    try:
+        urllib.request.urlopen(f"{settings.OLLAMA_HOST}/api/tags", timeout=0.3)
+        _last_llm_ok = True
+    except Exception:
+        _last_llm_ok = False
+    return _last_llm_ok
+
 @app.get("/health")
 def health():
     conn = get_conn()
@@ -51,14 +72,7 @@ def health():
         db_ok = conn.execute("SELECT 1").fetchone() is not None
     except Exception:
         db_ok = False
-    llm_ok = settings.MOCK_LLM
-    if not llm_ok:
-        import urllib.request
-        try:
-            urllib.request.urlopen(f"{settings.OLLAMA_HOST}/api/tags", timeout=3)
-            llm_ok = True
-        except Exception:
-            llm_ok = False
+    llm_ok = check_llm_live()
     conn = get_conn()
     try:
         details = {"llm_provider": settings.LLM_PROVIDER, "model": settings.OLLAMA_MODEL,

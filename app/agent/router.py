@@ -23,8 +23,37 @@ PROCEDURE_RE = ("policy", "how do i", "how can i", "what is the", "what's the", 
 INTENTS_FALLBACK = ("order_status", "return_eligibility", "refund", "raise_return",
                     "warranty", "policy_fact", "multi_step", "what_if", "general")
 
+KEYWORD_TYPOS = {
+    "return": ("return", "returns", "reutrn", "retun", "retrn", "reurn", "exchange"),
+    "refund": ("refund", "refunds", "refud", "refeund", "reimburse", "reimburce"),
+    "warranty": ("warranty", "waranty", "warenty", "guarantee", "garantee"),
+    "electronics": ("electronics", "electronic", "electornics", "eletronics", "electonics"),
+    "headphones": ("headphones", "headphone", "headfones", "headphons", "earbuds", "erbuds"),
+    "fashion": ("fashion", "fashon", "apparel", "clothing"),
+    "grocery": ("grocery", "grosery", "groceries"),
+    "beauty": ("beauty", "beuty", "cosmetics")
+}
+
+def correct_typos(text: str) -> str:
+    from rapidfuzz import fuzz
+    words = text.split()
+    corrected = []
+    for w in words:
+        cleaned = "".join(c for c in w.lower() if c.isalnum())
+        matched = False
+        if len(cleaned) >= 4:
+            for canonical, variants in KEYWORD_TYPOS.items():
+                if any(fuzz.ratio(cleaned, v) >= 82 for v in variants):
+                    corrected.append(canonical)
+                    matched = True
+                    break
+        if not matched:
+            corrected.append(w)
+    return " ".join(corrected)
+
 def extract(question: str) -> dict:
-    q = question.lower()
+    q_norm = correct_typos(question)
+    q = q_norm.lower()
     order_id = ORDER_RE.search(question)
     sku = SKU_RE.search(question)
 

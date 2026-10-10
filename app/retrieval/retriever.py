@@ -16,7 +16,8 @@ class Retriever:
                as_of: str = "", top_k: int | None = None) -> list[dict]:
         top_k = top_k or settings.TOP_K
         as_of_i = int(as_of.replace("-", "") or 0) if as_of else 99999999
-        q = question.lower()
+        from ..agent.router import correct_typos
+        q = correct_typos(question).lower()
         for k, v in EXPANSIONS.items():
             if k in q: q = q.replace(k, v)
         hits = self.store.semantic_search(q, as_of_i, top_k) or self.store.keyword_search(q, as_of_i, top_k)
