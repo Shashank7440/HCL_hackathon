@@ -1,14 +1,64 @@
 """ShopEasy Retail Support Agent - Modern Streamlit Interface.
 Ultra-fast, typo-tolerant, thin client connecting to the FastAPI backend (Section 6 contract).
-Supports live chat, quick scenarios, audit inspection, and panelist live document ingestion.
+Supports live chat, automated refund flows, interactive order selection, quick scenarios,
+audit inspection, panelist live document ingestion, and full database explorer.
 """
-import json, os, requests, streamlit as st
+import json, os, re, requests, sqlite3
+import pandas as pd
+import streamlit as st
 
 st.set_page_config(
     page_title="ShopEasy Retail AI Support Agent",
     page_icon="🛍️",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
+
+# Custom Design System & CSS
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+    
+    html, body, [class*="css"] {
+        font-family: 'Plus Jakarta Sans', sans-serif;
+    }
+    
+    .main-header {
+        background: linear-gradient(135deg, #0F172A 0%, #1E293B 50%, #334155 100%);
+        padding: 24px 30px;
+        border-radius: 14px;
+        margin-bottom: 22px;
+        color: white;
+        box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.25);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    
+    .customer-badge {
+        background: #F8FAFC;
+        border: 1px solid #E2E8F0;
+        border-left: 4px solid #3B82F6;
+        padding: 12px 16px;
+        border-radius: 10px;
+        margin-top: 10px;
+        margin-bottom: 14px;
+    }
+    
+    .refund-card {
+        background: #F0FDF4;
+        border: 1px solid #BBF7D0;
+        border-radius: 10px;
+        padding: 14px 18px;
+        margin: 10px 0;
+    }
+    
+    .stMetric {
+        background: #F8FAFC;
+        border: 1px solid #E2E8F0;
+        padding: 10px 14px;
+        border-radius: 8px;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 API_BASE = os.getenv("API_BASE", "http://localhost:8000")
 try:
@@ -18,10 +68,10 @@ except BaseException:
     API_BASE = os.getenv("API_BASE", "http://localhost:8000")
 
 # Cached health check so UI never blocks or lags
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=20)
 def get_api_health(base_url: str):
     try:
-        r = requests.get(f"{base_url}/health", timeout=1)
+        r = requests.get(f"{base_url}/health", timeout=1.5)
         return r.json() if r.status_code == 200 else None
     except Exception:
         return None
@@ -80,11 +130,19 @@ CUSTOMERS_INFO = {
 
 # Header & Branding
 st.markdown("""
-<div style="background: linear-gradient(135deg, #1E293B 0%, #0F172A 100%); padding: 18px 24px; border-radius: 12px; margin-bottom: 20px; color: white;">
-    <h2 style="margin: 0; font-weight: 700; color: #F8FAFC;">🛍️ ShopEasy AI Retail Support Agent</h2>
-    <p style="margin: 6px 0 0 0; color: #94A3B8; font-size: 0.95rem;">
-        Multi-Agent Architecture · Annex A Source Precedence · Deterministic Code Tools · Typo-Tolerant
-    </p>
+<div class="main-header">
+    <div style="display: flex; align-items: center; justify-content: space-between;">
+        <div>
+            <h2 style="margin: 0; font-weight: 700; color: #F8FAFC; font-size: 1.6rem;">🛍️ ShopEasy AI Retail Support Agent</h2>
+            <p style="margin: 6px 0 0 0; color: #94A3B8; font-size: 0.95rem;">
+                Autonomous Multi-Agent System · Annex A Precedence · Deterministic Math Tools · Typo-Tolerant
+            </p>
+        </div>
+        <div style="text-align: right; background: rgba(255,255,255,0.06); padding: 8px 16px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);">
+            <div style="font-size: 0.75rem; color: #CBD5E1; text-transform: uppercase; letter-spacing: 0.5px;">Architecture</div>
+            <div style="font-size: 0.9rem; font-weight: 600; color: #38BDF8;">LangGraph Multi-Agent</div>
+        </div>
+    </div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -129,11 +187,11 @@ with st.sidebar:
     # Display Active Customer Card
     c_info = CUSTOMERS_INFO.get(active_cid, {"name": "Custom User", "tier": "UNKNOWN", "orders": "Custom", "expected": "Custom scenario"})
     st.markdown(f"""
-    <div style="background: #F1F5F9; padding: 12px; border-radius: 8px; border-left: 4px solid #3B82F6; margin-top: 8px;">
-        <div style="font-weight: 600; color: #1E293B;">{c_info['name']} ({active_cid or 'Guest'})</div>
-        <div style="font-size: 0.85rem; color: #475569;"><b>Tier:</b> {c_info['tier']}</div>
+    <div class="customer-badge">
+        <div style="font-weight: 600; color: #1E293B; font-size: 1rem;">{c_info['name']} <span style="font-size: 0.8rem; background: #E0E7FF; color: #3730A3; padding: 2px 6px; border-radius: 4px;">{active_cid or 'Guest'}</span></div>
+        <div style="font-size: 0.85rem; color: #475569; margin-top: 4px;"><b>Tier:</b> {c_info['tier']}</div>
         <div style="font-size: 0.85rem; color: #475569;"><b>Orders:</b> {c_info['orders']}</div>
-        <div style="font-size: 0.8rem; color: #64748B; margin-top: 4px;"><i>{c_info['expected']}</i></div>
+        <div style="font-size: 0.8rem; color: #64748B; margin-top: 6px; line-height: 1.3;"><i>{c_info['expected']}</i></div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -152,14 +210,15 @@ with st.sidebar:
     st.divider()
     st.subheader("⚡ 1-Click Scenario Prompts")
     quick_queries = [
-        ("Return Window (Electronics)", "What is the return window for electronics?"),
-        ("Typo Handling Demo", "What is the reutrn window for electornics?"),
-        ("Refund Calculation (O-100001)", "How much refund will I get for order O-100001?"),
-        ("Multi-Step Reasoning", "My headphones stopped working after 41 days. Can I return them, and if not, what can I do?"),
-        ("Privacy Violation Refusal", "Where is my order O-100002?"),
-        ("Unanswerable / Abstention", "Do you deliver to Antarctica?"),
-        ("Gold Member What-If", "What if I were a Gold member for order O-100001?"),
-        ("Ambiguity Disambiguation", "Can I return my headphones?"),
+        ("❓ When will I get my refund? (Automated)", "When will I get my refund?"),
+        ("💰 Refund Calculation (O-100001)", "How much refund will I get for order O-100001?"),
+        ("🔄 Ambiguity Disambiguation", "Can I return my headphones?"),
+        ("📦 Return Window (Electronics)", "What is the return window for electronics?"),
+        ("🔤 Typo Handling Demo", "What is the reutrn window for electornics?"),
+        ("⚙️ Multi-Step Reasoning (41 days)", "My headphones stopped working after 41 days. Can I return them, and if not, what can I do?"),
+        ("🛡️ Privacy Violation Refusal", "Where is my order O-100002?"),
+        ("❄️ Unanswerable / Abstention", "Do you deliver to Antarctica?"),
+        ("⭐ Gold Member What-If", "What if I were a Gold member for order O-100001?"),
     ]
     for label, query_text in quick_queries:
         if st.button(label, use_container_width=True):
@@ -177,14 +236,42 @@ with tab_chat:
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
+    # Automated Flow Demo Bar
+    col_act1, col_act2 = st.columns([3, 1])
+    with col_act1:
+        if st.button("🚀 Run Automated Flow: 'When will I get my refund?'", type="primary", use_container_width=True):
+            st.session_state["preset_input"] = "When will I get my refund?"
+            st.rerun()
+    with col_act2:
+        if st.button("🗑️ Clear Chat", use_container_width=True):
+            st.session_state.messages = []
+            st.rerun()
+
+    st.write("")
+
     # Display Chat History
-    for m in st.session_state.messages:
+    for idx, m in enumerate(st.session_state.messages):
         with st.chat_message(m["role"]):
             st.markdown(m["content"], unsafe_allow_html=True)
-            if "extra" in m:
+            
+            # Interactive Quick Buttons for disambiguation
+            if m["role"] == "assistant" and "extra" in m:
                 d = m["extra"]
-                cols = st.columns(3)
                 atype = d.get("answer_type", "N/A")
+                ans_text = m["content"]
+                
+                # Check for order recommendations to create interactive clickable buttons
+                if atype == "clarification_needed":
+                    found_orders = re.findall(r"\bO-\d{6}\b", ans_text)
+                    if found_orders:
+                        st.markdown("**⚡ Click an order below to proceed with your refund:**")
+                        cols_btns = st.columns(min(len(found_orders), 3))
+                        for b_idx, oid in enumerate(found_orders[:3]):
+                            if cols_btns[b_idx].button(f"👉 Select {oid}", key=f"btn_hist_{idx}_{oid}", use_container_width=True):
+                                st.session_state["preset_input"] = f"How much refund will I get for order {oid}?"
+                                st.rerun()
+
+                cols = st.columns(3)
                 color_map = {
                     "calculated": "🟢",
                     "retrieved_fact": "🔵",
@@ -216,6 +303,14 @@ with tab_chat:
         user_query = st.session_state.pop("preset_input")
 
     if user_query:
+        # Context-aware follow-up: If user typed just an order id after a clarification question
+        clean_q = user_query.strip()
+        oid_match = re.search(r"\bO-\d{6}\b", clean_q)
+        if oid_match and len(clean_q.split()) <= 3 and st.session_state.messages:
+            last_msg = st.session_state.messages[-1]
+            if last_msg.get("role") == "assistant" and last_msg.get("extra", {}).get("answer_type") == "clarification_needed":
+                user_query = f"How much refund will I get for order {oid_match.group(0)}?"
+
         st.session_state.messages.append({"role": "user", "content": user_query})
         with st.chat_message("user"):
             st.markdown(user_query)
@@ -224,15 +319,27 @@ with tab_chat:
             with st.spinner("Processing through Multi-Agent System..."):
                 try:
                     headers = {"X-Customer-Id": active_cid} if active_cid else {}
-                    payload = {"question": user_query, "as_of_date": as_of_str}
+                    payload = {"question": user_query, "as_of_date": as_of_str, "customer_id": active_cid}
                     res = requests.post(f"{API_BASE}/ask", json=payload, headers=headers, timeout=60)
                     data = res.json()
 
                     ans = data.get("answer", "")
                     st.markdown(ans)
 
-                    cols = st.columns(3)
                     atype = data.get("answer_type", "N/A")
+                    
+                    # Interactive buttons immediately shown for newly returned clarification
+                    if atype == "clarification_needed":
+                        found_orders = re.findall(r"\bO-\d{6}\b", ans)
+                        if found_orders:
+                            st.markdown("**⚡ Click an order below to proceed with your refund:**")
+                            cols_btns = st.columns(min(len(found_orders), 3))
+                            for b_idx, oid in enumerate(found_orders[:3]):
+                                if cols_btns[b_idx].button(f"👉 Select {oid}", key=f"btn_live_{oid}", use_container_width=True):
+                                    st.session_state["preset_input"] = f"How much refund will I get for order {oid}?"
+                                    st.rerun()
+
+                    cols = st.columns(3)
                     color_map = {
                         "calculated": "🟢",
                         "retrieved_fact": "🔵",
@@ -302,71 +409,56 @@ with tab_ingest:
                 "scope_categories": scope_cat,
                 "scope_tiers": "ALL"
             })
-            files = {"file": (uploaded_file.name, uploaded_file.getvalue(), "text/plain")}
+            files = {"file": (uploaded_file.name, uploaded_file.getvalue())}
             data_fields = {"metadata": meta_json}
             if optional_rules.strip():
                 data_fields["rules"] = optional_rules.strip()
 
-            with st.spinner("Ingesting document, chunking, and updating rule registry..."):
+            with st.spinner("Ingesting and updating index + rule registry..."):
                 try:
-                    resp = requests.post(f"{API_BASE}/ingest", files=files, data=data_fields, timeout=60)
-                    if resp.status_code == 200:
-                        st.success(f"✅ Ingestion Successful! {resp.json()}")
+                    res = requests.post(f"{API_BASE}/ingest", files=files, data=data_fields, timeout=60)
+                    if res.status_code == 200:
+                        st.success("✅ Ingestion Successful!")
+                        st.json(res.json())
                     else:
-                        st.error(f"Ingestion failed ({resp.status_code}): {resp.text}")
+                        st.error(f"Ingestion failed: {res.text}")
                 except Exception as e:
-                    st.error(f"Ingestion error: {e}")
+                    st.error(f"Error calling ingest API: {e}")
 
 with tab_audit:
-    st.subheader("🔍 Audit Log & Trace Record Inspector")
-    st.caption("Inspect full tamper-proof audit records stored in SQLite for any trace ID.")
-    trace_query = st.text_input("Enter Trace ID to Inspect:")
-    if st.button("Inspect Audit Record"):
-        if trace_query:
+    st.subheader("🔍 Audit Record Inspector")
+    trace_id_input = st.text_input("Enter Trace ID to Inspect:")
+    if st.button("Fetch Audit Record"):
+        if trace_id_input:
             try:
-                headers = {"X-Admin-Key": "admin-demo-key"}
-                resp = requests.get(f"{API_BASE}/audit/{trace_query.strip()}", headers=headers, timeout=10)
-                if resp.status_code == 200:
-                    st.json(resp.json())
+                res = requests.get(f"{API_BASE}/audit/{trace_id_input}", timeout=10)
+                if res.status_code == 200:
+                    st.json(res.json())
                 else:
-                    st.error(f"Audit lookup returned status {resp.status_code}: {resp.text}")
+                    st.error(f"Audit trace not found: {res.text}")
             except Exception as e:
-                st.error(f"Audit lookup failed: {e}")
+                st.error(f"Error fetching audit: {e}")
 
 with tab_db:
-    st.subheader("🗄️ SQLite Database Explorer (`data/app.db`)")
-    st.caption("Browse, inspect, and query the underlying relational tables directly without needing external tools.")
+    st.subheader("🗄️ Live SQLite Database Explorer")
+    st.caption("Inspect live orders, customers, products, return records, and the Annex A rule registry.")
 
-    import sqlite3, pandas as pd
-    from app.config import settings
-
+    db_path = "data/app.db"
     try:
-        conn = sqlite3.connect(settings.DB_PATH)
-        
-        # Summary Metrics
-        m1, m2, m3, m4 = st.columns(4)
-        c_count = conn.execute("SELECT COUNT(*) FROM customers").fetchone()[0]
-        o_count = conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
-        p_count = conn.execute("SELECT COUNT(*) FROM products").fetchone()[0]
-        r_count = conn.execute("SELECT COUNT(*) FROM rule_registry").fetchone()[0]
-        m1.metric("Customers", c_count)
-        m2.metric("Orders", o_count)
-        m3.metric("Products", p_count)
-        m4.metric("Active Rules", r_count)
+        conn = sqlite3.connect(db_path)
+        tables_query = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name;"
+        tbls = [r[0] for r in conn.execute(tables_query).fetchall()]
 
-        st.divider()
+        col_tbl, col_search, col_limit = st.columns([2, 3, 1])
+        with col_tbl:
+            selected_tbl = st.selectbox("Select Database Table:", tbls, index=tbls.index("orders") if "orders" in tbls else 0)
+        with col_search:
+            search_kw = st.text_input("🔍 Search within table (text/ID):", value=active_cid if active_cid else "")
+        with col_limit:
+            limit_n = st.number_input("Row limit:", min_value=5, max_value=200, value=25)
 
-        tables = ["customers", "orders", "order_items", "products", "returns", "rule_registry", "audit_log", "documents", "chunks"]
-        selected_tbl = st.selectbox("Select Table to View:", options=tables, index=0)
-
-        # Search filter
-        search_kw = st.text_input(f"Filter records in '{selected_tbl}' (search keyword):", value="")
-        
-        limit_n = st.slider("Max rows to display:", min_value=10, max_value=200, value=50, step=10)
-        
         query = f"SELECT * FROM {selected_tbl}"
         if search_kw.strip():
-            # Filter across columns
             df_full = pd.read_sql_query(query, conn)
             mask = df_full.astype(str).apply(lambda col: col.str.contains(search_kw.strip(), case=False, na=False)).any(axis=1)
             df = df_full[mask].head(limit_n)
@@ -407,4 +499,3 @@ with tab_db:
         conn.close()
     except Exception as db_err:
         st.error(f"Database connection error: {db_err}")
-

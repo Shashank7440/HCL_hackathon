@@ -89,7 +89,8 @@ def health():
 @app.post("/ask", response_model=AskResponse)
 def ask(body: AskRequest,
         x_customer_id: str | None = Header(default=None)):
-    state = {"question": body.question, "customer_id": x_customer_id,
+    cid = x_customer_id or body.customer_id
+    state = {"question": body.question, "customer_id": cid,
              "as_of_date": body.as_of_date.isoformat() if body.as_of_date else date.today().isoformat()}
     result = graph.execute(state)
     conn = get_conn()

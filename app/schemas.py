@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 class AskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=1000)
     as_of_date: date | None = None
+    customer_id: str | None = None
 
 class Citation(BaseModel):
     doc_id: str = ""

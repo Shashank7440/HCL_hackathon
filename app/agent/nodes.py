@@ -155,9 +155,20 @@ def tools_node(state: dict, conn) -> dict:
                     "answer_type": "clarification_needed"
                 }
 
+        orders_desc = []
+        for r in rows[:5]:
+            full_o = order_tools.get_order(conn, cid, r["order_id"])
+            item_names = []
+            if full_o and full_o.get("items"):
+                for itm in full_o["items"]:
+                    p_row = conn.execute("SELECT name FROM products WHERE sku = ?", (itm["sku"],)).fetchone()
+                    item_names.append(p_row["name"] if p_row else itm["sku"])
+            item_str = f" ({', '.join(item_names)})" if item_names else ""
+            orders_desc.append(f"{r['order_id']}{item_str} placed on {r['order_date']}")
+
         return {
             "answer": "Which order is this about? Your orders: " +
-                      ", ".join(f"{r['order_id']} ({r['order_date']})" for r in rows[:5]),
+                      ", ".join(orders_desc) + ". Which order would you like to check?",
             "answer_type": "clarification_needed"
         }
 
@@ -200,10 +211,13 @@ def tools_node(state: dict, conn) -> dict:
             state["assumptions"].extend(["Reason not stated: assuming change of mind."])
             extra = " This exceeds the auto-approval limit and needs human approval." \
                     if out.get("requires_human_approval") else ""
+            full_o = order_tools.get_order(conn, cid, oid)
+            pm = full_o["order"].get("payment_method") if full_o and full_o.get("order") else None
+            pm_note = f" Per policy, refunds are credited to your original payment method ({pm}) once the returned item is picked up and inspected." if pm else ""
             return {
                 "answer": f"Your refund would be {out['refund_amount']} "
                           f"(gross {out['gross_amount']} - restocking fee {out['restocking_fee']}"
-                          f" - reverse shipping {out['reverse_shipping_fee']}).{extra}",
+                          f" - reverse shipping {out['reverse_shipping_fee']}).{extra}{pm_note}",
                 "answer_type": "calculated",
                 "explanation": "Refund computed by a deterministic tool from the order record "
                                "and the rule registry, using net price."
