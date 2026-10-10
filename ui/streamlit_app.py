@@ -1,10 +1,8 @@
 """ShopEasy Retail Support Agent - Modern Streamlit Interface.
 Ultra-fast, typo-tolerant, thin client connecting to the FastAPI backend (Section 6 contract).
-Supports live chat, automated refund flows, interactive order selection, quick scenarios,
-audit inspection, panelist live document ingestion, and full database explorer.
+Supports live chat, order disambiguation, audit inspection, and panelist document ingestion.
 """
-import json, os, re, requests, sqlite3
-import pandas as pd
+import json, os, re, requests
 import streamlit as st
 
 st.set_page_config(
@@ -25,9 +23,9 @@ st.markdown("""
     
     .main-header {
         background: linear-gradient(135deg, #0F172A 0%, #1E293B 50%, #334155 100%);
-        padding: 24px 30px;
+        padding: 22px 28px;
         border-radius: 14px;
-        margin-bottom: 22px;
+        margin-bottom: 20px;
         color: white;
         box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.25);
         border: 1px solid rgba(255, 255, 255, 0.08);
@@ -43,12 +41,12 @@ st.markdown("""
         margin-bottom: 14px;
     }
     
-    .refund-card {
-        background: #F0FDF4;
-        border: 1px solid #BBF7D0;
+    .audit-card {
+        background: #F8FAFC;
+        border: 1px solid #E2E8F0;
         border-radius: 10px;
-        padding: 14px 18px;
-        margin: 10px 0;
+        padding: 16px;
+        margin-bottom: 12px;
     }
     
     .stMetric {
@@ -66,6 +64,8 @@ try:
         API_BASE = st.secrets.get("API_BASE", API_BASE)
 except BaseException:
     API_BASE = os.getenv("API_BASE", "http://localhost:8000")
+
+ADMIN_KEY = os.getenv("ADMIN_KEY", "admin-demo-key")
 
 # Cached health check so UI never blocks or lags
 @st.cache_data(ttl=20)
@@ -135,7 +135,7 @@ st.markdown("""
         <div>
             <h2 style="margin: 0; font-weight: 700; color: #F8FAFC; font-size: 1.6rem;">🛍️ ShopEasy AI Retail Support Agent</h2>
             <p style="margin: 6px 0 0 0; color: #94A3B8; font-size: 0.95rem;">
-                Autonomous Multi-Agent System · Annex A Precedence · Deterministic Math Tools · Typo-Tolerant
+                Multi-Agent Architecture · Annex A Source Precedence · Deterministic Math Tools · Typo-Tolerant
             </p>
         </div>
         <div style="text-align: right; background: rgba(255,255,255,0.06); padding: 8px 16px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);">
@@ -210,7 +210,7 @@ with st.sidebar:
     st.divider()
     st.subheader("⚡ 1-Click Scenario Prompts")
     quick_queries = [
-        ("❓ When will I get my refund? (Automated)", "When will I get my refund?"),
+        ("❓ When will I get my refund?", "When will I get my refund?"),
         ("💰 Refund Calculation (O-100001)", "How much refund will I get for order O-100001?"),
         ("🔄 Ambiguity Disambiguation", "Can I return my headphones?"),
         ("📦 Return Window (Electronics)", "What is the return window for electronics?"),
@@ -224,30 +224,25 @@ with st.sidebar:
         if st.button(label, use_container_width=True):
             st.session_state["preset_input"] = query_text
 
-# Main Tabs
-tab_chat, tab_ingest, tab_audit, tab_db = st.tabs([
+# Main Tabs (Clean 3-Tab Architecture)
+tab_chat, tab_audit, tab_ingest = st.tabs([
     "💬 Customer Support Chat",
-    "📄 Panelist Document Ingest",
     "🔍 Audit Trace Inspector",
-    "🗄️ Database Explorer"
+    "📄 Panelist Document Ingest"
 ])
 
 with tab_chat:
     if "messages" not in st.session_state:
         st.session_state.messages = []
+    if "recent_traces" not in st.session_state:
+        st.session_state.recent_traces = []
 
-    # Automated Flow Demo Bar
-    col_act1, col_act2 = st.columns([3, 1])
-    with col_act1:
-        if st.button("🚀 Run Automated Flow: 'When will I get my refund?'", type="primary", use_container_width=True):
-            st.session_state["preset_input"] = "When will I get my refund?"
-            st.rerun()
-    with col_act2:
+    # Chat Controls Header
+    col_hdr_left, col_hdr_right = st.columns([5, 1])
+    with col_hdr_right:
         if st.button("🗑️ Clear Chat", use_container_width=True):
             st.session_state.messages = []
             st.rerun()
-
-    st.write("")
 
     # Display Chat History
     for idx, m in enumerate(st.session_state.messages):
@@ -264,10 +259,10 @@ with tab_chat:
                 if atype == "clarification_needed":
                     found_orders = re.findall(r"\bO-\d{6}\b", ans_text)
                     if found_orders:
-                        st.markdown("**⚡ Click an order below to proceed with your refund:**")
+                        st.markdown("**⚡ Select an order to check refund & return eligibility:**")
                         cols_btns = st.columns(min(len(found_orders), 3))
                         for b_idx, oid in enumerate(found_orders[:3]):
-                            if cols_btns[b_idx].button(f"👉 Select {oid}", key=f"btn_hist_{idx}_{oid}", use_container_width=True):
+                            if cols_btns[b_idx].button(f"👉 Order {oid}", key=f"btn_hist_{idx}_{oid}", use_container_width=True):
                                 st.session_state["preset_input"] = f"How much refund will I get for order {oid}?"
                                 st.rerun()
 
@@ -326,16 +321,21 @@ with tab_chat:
                     ans = data.get("answer", "")
                     st.markdown(ans)
 
+                    # Store trace in session
+                    trace_val = data.get("trace_id")
+                    if trace_val and trace_val not in st.session_state.recent_traces:
+                        st.session_state.recent_traces.append(trace_val)
+
                     atype = data.get("answer_type", "N/A")
                     
                     # Interactive buttons immediately shown for newly returned clarification
                     if atype == "clarification_needed":
                         found_orders = re.findall(r"\bO-\d{6}\b", ans)
                         if found_orders:
-                            st.markdown("**⚡ Click an order below to proceed with your refund:**")
+                            st.markdown("**⚡ Select an order to check refund & return eligibility:**")
                             cols_btns = st.columns(min(len(found_orders), 3))
                             for b_idx, oid in enumerate(found_orders[:3]):
-                                if cols_btns[b_idx].button(f"👉 Select {oid}", key=f"btn_live_{oid}", use_container_width=True):
+                                if cols_btns[b_idx].button(f"👉 Order {oid}", key=f"btn_live_{oid}", use_container_width=True):
                                     st.session_state["preset_input"] = f"How much refund will I get for order {oid}?"
                                     st.rerun()
 
@@ -373,6 +373,99 @@ with tab_chat:
                     })
                 except Exception as e:
                     st.error(f"Error communicating with API backend: {e}")
+
+with tab_audit:
+    st.subheader("🔍 Audit Record Inspector (Requirement R10)")
+    st.markdown("""
+    Every query processed by the Multi-Agent system generates a cryptographically tracked **Trace ID**.
+    The audit record captures the full decision trail: sanitized inputs, verified customer identity, 
+    precedence decisions, deterministic tool invocations, and rule citations — **without logging sensitive chain-of-thought**.
+    """)
+
+    # Quick inspection from current session
+    col_sel, col_btn = st.columns([3, 1])
+    recent_list = list(reversed(st.session_state.get("recent_traces", [])))
+    
+    target_trace = ""
+    with col_sel:
+        if recent_list:
+            selected_recent = st.selectbox("Select Recent Session Trace:", options=["-- Pick a recent trace --"] + recent_list)
+            if selected_recent != "-- Pick a recent trace --":
+                target_trace = selected_recent
+        else:
+            st.info("💡 Send a message in the Chat tab first, or type a Trace ID manually below.")
+
+    manual_trace = st.text_input("Or Enter Any Trace ID Manually:", value=target_trace)
+    inspect_id = manual_trace.strip()
+
+    if st.button("🔎 Fetch Audit Record", type="primary"):
+        if not inspect_id:
+            st.warning("Please enter or select a Trace ID.")
+        else:
+            try:
+                headers = {"X-Admin-Key": ADMIN_KEY}
+                res = requests.get(f"{API_BASE}/audit/{inspect_id}", headers=headers, timeout=10)
+                if res.status_code == 200:
+                    data = res.json()
+                    rec = data.get("record", {})
+                    
+                    st.success(f"✅ Audit Record Found for Trace `{data.get('trace_id')}`")
+
+                    # Key Metrics Row
+                    mcol1, mcol2, mcol3, mcol4 = st.columns(4)
+                    mcol1.metric("Customer ID", rec.get("customer_id") or "Anonymous")
+                    mcol2.metric("Intent Category", rec.get("question_category") or "general")
+                    mcol3.metric("Answer Type", rec.get("answer_type") or "N/A")
+                    mcol4.metric("Timestamp (UTC)", rec.get("timestamp") or "N/A")
+
+                    # Audit Breakdown Cards
+                    st.markdown("#### 🛡️ Decision & Enforcement Trail")
+                    
+                    col_d1, col_d2 = st.columns(2)
+                    with col_d1:
+                        st.markdown("**Question Sanitized (PII-Safe):**")
+                        st.code(rec.get("question_redacted", ""), language="text")
+                        
+                        st.markdown("**Sources Retrieved from Knowledge Base:**")
+                        sources = rec.get("sources_retrieved", [])
+                        if sources:
+                            for s in sources:
+                                st.markdown(f"- 📄 `{s}`")
+                        else:
+                            st.caption("None (Deterministic tool or refusal)")
+
+                    with col_d2:
+                        st.markdown("**Applied Rules & Precedence:**")
+                        rules = rec.get("applied_rules", [])
+                        if rules:
+                            for r in rules:
+                                st.markdown(f"- ⚖️ Rule `{r.get('rule_id')}`: Value `{r.get('value')}` (Source: `{r.get('source_doc_id')}`)")
+                        else:
+                            st.caption("No rule registry clauses triggered.")
+
+                        decisions = rec.get("precedence_decisions", [])
+                        if decisions:
+                            st.markdown("**Precedence Decisions:**")
+                            for dec in decisions:
+                                st.markdown(f"- 🏆 {dec}")
+
+                    st.markdown("#### 🛠️ Deterministic Tool Execution Log")
+                    tools = rec.get("tools_invoked", [])
+                    if tools:
+                        st.json(tools)
+                    else:
+                        st.caption("No deterministic math tools were executed for this query.")
+
+                    with st.expander("📄 View Full Raw Audit JSON (Contract Payload)"):
+                        st.json(data)
+                elif res.status_code == 404:
+                    st.error(f"Trace `{inspect_id}` not found in the SQLite `audit_log` table.")
+                elif res.status_code == 403:
+                    st.error("403 Forbidden: You do not have permission to view this trace without an admin key.")
+                else:
+                    st.error(f"Error ({res.status_code}): {res.text}")
+            except Exception as e:
+                st.error(f"Failed to connect to API: {e}")
 
 with tab_ingest:
     st.subheader("📄 Live Document & Rule Ingestion (Panelist Testing)")
@@ -424,78 +517,3 @@ with tab_ingest:
                         st.error(f"Ingestion failed: {res.text}")
                 except Exception as e:
                     st.error(f"Error calling ingest API: {e}")
-
-with tab_audit:
-    st.subheader("🔍 Audit Record Inspector")
-    trace_id_input = st.text_input("Enter Trace ID to Inspect:")
-    if st.button("Fetch Audit Record"):
-        if trace_id_input:
-            try:
-                res = requests.get(f"{API_BASE}/audit/{trace_id_input}", timeout=10)
-                if res.status_code == 200:
-                    st.json(res.json())
-                else:
-                    st.error(f"Audit trace not found: {res.text}")
-            except Exception as e:
-                st.error(f"Error fetching audit: {e}")
-
-with tab_db:
-    st.subheader("🗄️ Live SQLite Database Explorer")
-    st.caption("Inspect live orders, customers, products, return records, and the Annex A rule registry.")
-
-    db_path = "data/app.db"
-    try:
-        conn = sqlite3.connect(db_path)
-        tables_query = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name;"
-        tbls = [r[0] for r in conn.execute(tables_query).fetchall()]
-
-        col_tbl, col_search, col_limit = st.columns([2, 3, 1])
-        with col_tbl:
-            selected_tbl = st.selectbox("Select Database Table:", tbls, index=tbls.index("orders") if "orders" in tbls else 0)
-        with col_search:
-            search_kw = st.text_input("🔍 Search within table (text/ID):", value=active_cid if active_cid else "")
-        with col_limit:
-            limit_n = st.number_input("Row limit:", min_value=5, max_value=200, value=25)
-
-        query = f"SELECT * FROM {selected_tbl}"
-        if search_kw.strip():
-            df_full = pd.read_sql_query(query, conn)
-            mask = df_full.astype(str).apply(lambda col: col.str.contains(search_kw.strip(), case=False, na=False)).any(axis=1)
-            df = df_full[mask].head(limit_n)
-            st.info(f"Showing {len(df)} matching rows (out of {len(df_full)} total)")
-        else:
-            df = pd.read_sql_query(f"{query} LIMIT {limit_n}", conn)
-            st.caption(f"Showing top {len(df)} rows")
-
-        st.dataframe(df, use_container_width=True)
-
-        # Download CSV button
-        csv_data = df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label=f"📥 Download {selected_tbl}.csv",
-            data=csv_data,
-            file_name=f"{selected_tbl}.csv",
-            mime="text/csv",
-        )
-
-        st.divider()
-        st.subheader("⚡ Execute Custom Read-Only SQL Query")
-        custom_sql = st.text_area(
-            "SQL Query (SELECT only):",
-            value=f"SELECT * FROM orders WHERE customer_id = '{active_cid if active_cid else 'C1001'}' LIMIT 10"
-        )
-        if st.button("Run SQL Query"):
-            sql_clean = custom_sql.strip()
-            if not sql_clean.lower().startswith("select"):
-                st.error("Only SELECT queries are allowed in this explorer for safety.")
-            else:
-                try:
-                    res_df = pd.read_sql_query(sql_clean, conn)
-                    st.success(f"Returned {len(res_df)} rows")
-                    st.dataframe(res_df, use_container_width=True)
-                except Exception as sql_err:
-                    st.error(f"SQL Error: {sql_err}")
-
-        conn.close()
-    except Exception as db_err:
-        st.error(f"Database connection error: {db_err}")
